@@ -524,5 +524,4 @@ public class DotController extends JPanel {
 
         return saved;
     }
-
 }

@@ -26,6 +26,7 @@ public class App {
     private static final String LOG_VISUALIZATION_FINISHED = "Visualization finished, returning to mode selection.";
     private static final String LOG_TARGET_SCREEN_BOUNDS_PREFIX = "Target screen bounds: ";
     private static final String LOG_RETURN_SCREEN_BOUNDS_PREFIX = "Return screen bounds: ";
+    private static final String LOG_SELECTION_SCREEN_BOUNDS_PREFIX = "Mode selection screen bounds: ";
 
     private static final String BUTTON_PLAY = "► Play";
     private static final String BUTTON_STOP = "Stop";
@@ -62,6 +63,11 @@ public class App {
         var selector = new ModeSelectionDialog();
         var selectedMode = selector.showAndWait(null, targetGraphicsConfiguration);
 
+        GraphicsConfiguration currentSelectionGraphicsConfiguration = selector.getLastDialogGraphicsConfiguration();
+        if (currentSelectionGraphicsConfiguration == null) {
+            currentSelectionGraphicsConfiguration = targetGraphicsConfiguration;
+        }
+
         if (selectedMode == null) {
             LOGGER.info(LOG_NO_MODE_SELECTED);
             LOGGER.info(LOG_APP_SHUTTING_DOWN);
@@ -70,7 +76,8 @@ public class App {
         }
 
         LOGGER.info(LOG_SELECTED_MODE_PREFIX + selectedMode.getName());
-        launchMainWindow(selectedMode, targetGraphicsConfiguration);
+        LOGGER.info(LOG_SELECTION_SCREEN_BOUNDS_PREFIX + currentSelectionGraphicsConfiguration.getBounds());
+        launchMainWindow(selectedMode, currentSelectionGraphicsConfiguration);
     }
 
     private static void launchMainWindow(

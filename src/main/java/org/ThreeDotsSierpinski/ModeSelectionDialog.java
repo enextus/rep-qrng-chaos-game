@@ -11,6 +11,8 @@ import java.awt.*;
  */
 public class ModeSelectionDialog {
 
+    private static final String DIALOG_TITLE = "Quantum Random Visualizer";
+
     private VisualizationMode selectedMode = null;
 
     /**
@@ -20,10 +22,28 @@ public class ModeSelectionDialog {
      * @return выбранный режим, или null если закрыли без выбора
      */
     public VisualizationMode showAndWait(JFrame parent) {
+        GraphicsConfiguration targetGraphicsConfiguration = parent == null
+                ? null
+                : parent.getGraphicsConfiguration();
+
+        return showAndWait(parent, targetGraphicsConfiguration);
+    }
+
+    /**
+     * Показывает диалог и центрирует его на указанном мониторе.
+     *
+     * @param parent                      родительский фрейм (может быть null)
+     * @param targetGraphicsConfiguration целевой монитор/экран
+     * @return выбранный режим, или null если закрыли без выбора
+     */
+    public VisualizationMode showAndWait(
+            JFrame parent,
+            GraphicsConfiguration targetGraphicsConfiguration
+    ) {
         selectedMode = null;
         var modes = VisualizationMode.allModes();
 
-        var dialog = new JDialog(parent, "Quantum Random Visualizer", true);
+        var dialog = new JDialog(parent, DIALOG_TITLE, true);
         dialog.setLayout(new BorderLayout(0, 0));
         dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
@@ -32,7 +52,7 @@ public class ModeSelectionDialog {
         header.setBorder(BorderFactory.createEmptyBorder(20, 24, 10, 24));
         header.setBackground(new Color(245, 245, 242));
 
-        var title = new JLabel("Quantum Random Visualizer");
+        var title = new JLabel(DIALOG_TITLE);
         title.setFont(new Font("SansSerif", Font.BOLD, 20));
         header.add(title, BorderLayout.WEST);
 
@@ -73,10 +93,45 @@ public class ModeSelectionDialog {
         // Размер и позиционирование
         dialog.setSize(640, 180 + modes.length * 110);
         dialog.setMinimumSize(new Dimension(400, 300));
-        dialog.setLocationRelativeTo(parent);
+        centerDialog(dialog, parent, targetGraphicsConfiguration);
         dialog.setVisible(true); // Блокирует до закрытия (modal)
 
         return selectedMode;
+    }
+
+    private static void centerDialog(
+            JDialog dialog,
+            JFrame parent,
+            GraphicsConfiguration targetGraphicsConfiguration
+    ) {
+        if (parent != null) {
+            dialog.setLocationRelativeTo(parent);
+            return;
+        }
+
+        if (targetGraphicsConfiguration == null) {
+            dialog.setLocationRelativeTo(null);
+            return;
+        }
+
+        Rectangle usableBounds = getUsableScreenBounds(targetGraphicsConfiguration);
+
+        int x = usableBounds.x + Math.max(0, (usableBounds.width - dialog.getWidth()) / 2);
+        int y = usableBounds.y + Math.max(0, (usableBounds.height - dialog.getHeight()) / 2);
+
+        dialog.setLocation(x, y);
+    }
+
+    private static Rectangle getUsableScreenBounds(GraphicsConfiguration graphicsConfiguration) {
+        Rectangle bounds = graphicsConfiguration.getBounds();
+        Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(graphicsConfiguration);
+
+        return new Rectangle(
+                bounds.x + insets.left,
+                bounds.y + insets.top,
+                bounds.width - insets.left - insets.right,
+                bounds.height - insets.top - insets.bottom
+        );
     }
 
     /**

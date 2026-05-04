@@ -122,6 +122,7 @@ public class DotController extends JPanel {
     private static final int STACK_VERTICAL_PADDING = 4;
     private static final int STACK_RIGHT_MARGIN = 40;
     private static final int STACK_MAX_CONSUMED_NUMBERS = 2_000;
+    private static final int STACK_MIN_VISIBLE_ROWS = 1;
 
     private static final int MAX_VISIBLE_DIGITS = 5;
     private static final int FIRST_DIGIT_BUCKET_INDEX = 0;
@@ -349,7 +350,15 @@ public class DotController extends JPanel {
                 RenderingHints.VALUE_TEXT_ANTIALIAS_ON
         );
 
-        int maxRows = (SIZE_HEIGHT - STACK_HEADER_HEIGHT - STACK_VERTICAL_PADDING) / ROW_HEIGHT;
+        int stackHeight = Math.max(MIN_CANVAS_SIZE, getHeight());
+        int maxRows = Math.max(
+                STACK_MIN_VISIBLE_ROWS,
+                (stackHeight - STACK_HEADER_HEIGHT - STACK_VERTICAL_PADDING) / ROW_HEIGHT
+        );
+        int requestedNumbers = Math.max(
+                STACK_MAX_CONSUMED_NUMBERS,
+                maxRows * MAX_COLUMNS
+        );
 
         List<List<Long>> digitBuckets = new ArrayList<>();
         String[] headers = new String[MAX_COLUMNS];
@@ -359,7 +368,7 @@ public class DotController extends JPanel {
             headers[i] = (i + DIGIT_INDEX_OFFSET) + DIGIT_HEADER_SUFFIX;
         }
 
-        for (Long randomValue : randomNumberProvider.getLastConsumedNumbers(STACK_MAX_CONSUMED_NUMBERS)) {
+        for (Long randomValue : randomNumberProvider.getLastConsumedNumbers(requestedNumbers)) {
             int numDigits = String.valueOf(Math.abs(randomValue)).length();
 
             if (numDigits <= MAX_VISIBLE_DIGITS) {
@@ -391,10 +400,10 @@ public class DotController extends JPanel {
             drawStackSeparator(g2d, colX);
 
             if (visIdx > 0) {
-                drawColumnSeparator(g2d, colX);
+                drawColumnSeparator(g2d, colX, stackHeight);
             }
 
-            drawStackNumbers(g2d, columnNumbers, colX, maxRows);
+            drawStackNumbers(g2d, columnNumbers, colX, maxRows, stackHeight);
         }
     }
 
@@ -417,21 +426,27 @@ public class DotController extends JPanel {
         g2d.drawLine(colX, STACK_HEADER_HEIGHT, colX + COLUMN_WIDTH, STACK_HEADER_HEIGHT);
     }
 
-    private void drawColumnSeparator(Graphics2D g2d, int colX) {
+    private void drawColumnSeparator(Graphics2D g2d, int colX, int stackHeight) {
         int sepX = colX - COLUMN_SPACING / 2;
 
         g2d.setColor(STACK_SEPARATOR_COLOR);
-        g2d.drawLine(sepX, CANVAS_ORIGIN_Y, sepX, SIZE_HEIGHT);
+        g2d.drawLine(sepX, CANVAS_ORIGIN_Y, sepX, stackHeight);
     }
 
-    private void drawStackNumbers(Graphics2D g2d, List<Long> columnNumbers, int colX, int maxRows) {
+    private void drawStackNumbers(
+            Graphics2D g2d,
+            List<Long> columnNumbers,
+            int colX,
+            int maxRows,
+            int stackHeight
+    ) {
         g2d.setFont(STACK_MONO_FONT);
 
         FontMetrics fm = g2d.getFontMetrics();
         int row = 0;
 
         for (int i = columnNumbers.size() - 1; i >= 0 && row < maxRows; i--, row++) {
-            int y = SIZE_HEIGHT - (row * ROW_HEIGHT) - STACK_ROW_BASELINE_OFFSET;
+            int y = stackHeight - (row * ROW_HEIGHT) - STACK_ROW_BASELINE_OFFSET;
 
             if (row % EVEN_ROW_DIVISOR == EVEN_ROW_REMAINDER) {
                 g2d.setColor(STACK_ZEBRA_COLOR);

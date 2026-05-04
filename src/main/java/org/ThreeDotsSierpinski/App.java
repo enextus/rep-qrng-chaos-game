@@ -25,6 +25,7 @@ public class App {
     private static final String LOG_SELECTED_MODE_PREFIX = "Selected mode: ";
     private static final String LOG_VISUALIZATION_FINISHED = "Visualization finished, returning to mode selection.";
     private static final String LOG_TARGET_SCREEN_BOUNDS_PREFIX = "Target screen bounds: ";
+    private static final String LOG_RETURN_SCREEN_BOUNDS_PREFIX = "Return screen bounds: ";
 
     private static final String BUTTON_PLAY = "► Play";
     private static final String BUTTON_STOP = "Stop";
@@ -69,17 +70,12 @@ public class App {
         }
 
         LOGGER.info(LOG_SELECTED_MODE_PREFIX + selectedMode.getName());
-        launchMainWindow(
-                selectedMode,
-                targetGraphicsConfiguration,
-                () -> showModeSelectionLoop(targetGraphicsConfiguration)
-        );
+        launchMainWindow(selectedMode, targetGraphicsConfiguration);
     }
 
     private static void launchMainWindow(
             VisualizationMode mode,
-            GraphicsConfiguration targetGraphicsConfiguration,
-            Runnable afterFinish
+            GraphicsConfiguration targetGraphicsConfiguration
     ) {
         RNProvider randomNumberProvider = new RNProvider();
         JLabel statusLabel = new JLabel("Initializing...");
@@ -104,7 +100,7 @@ public class App {
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                finishVisualization(frame, dotController, visualizationFinished, afterFinish);
+                finishVisualization(frame, dotController, visualizationFinished);
             }
         });
 
@@ -300,7 +296,7 @@ public class App {
 
         // Закончить визуализацию → вернуться к выбору режима
         finishButton.addActionListener(_ ->
-                finishVisualization(frame, dotController, visualizationFinished, afterFinish)
+                finishVisualization(frame, dotController, visualizationFinished)
         );
 
         // Ожидание инициализации
@@ -375,18 +371,90 @@ public class App {
     private static void finishVisualization(
             JFrame frame,
             DotController dotController,
-            AtomicBoolean visualizationFinished,
-            Runnable afterFinish
+            AtomicBoolean visualizationFinished
     ) {
         if (!visualizationFinished.compareAndSet(false, true)) {
             return;
         }
 
+        GraphicsConfiguration returnGraphicsConfiguration = resolveWindowGraphicsConfiguration(frame);
+
         dotController.shutdown();
         frame.dispose();
 
         LOGGER.info(LOG_VISUALIZATION_FINISHED);
-        SwingUtilities.invokeLater(afterFinish);
+        LOGGER.info(LOG_RETURN_SCREEN_BOUNDS_PREFIX + returnGraphicsConfiguration.getBounds());
+
+        SwingUtilities.invokeLater(() -> showModeSelectionLoop(returnGraphicsConfiguration));
+    }
+
+
+    /**
+     * Возвращает монитор, на котором фактически находилось окно визуализации
+     * в момент завершения. Это важно для multi-monitor workflow: если пользователь
+     * перетащил окно модуса на другой монитор и нажал «Закончить визуализацию»,
+     * следующий ModeSelectionDialog должен открыться именно там.
+     */
+    private static GraphicsConfiguration resolveWindowGraphicsConfiguration(Window window) {
+        if (window == null) {
+            return getDefaultGraphicsConfiguration();
+        }
+
+        Rectangle windowBounds = window.getBounds();
+
+        if (windowBounds != null && !windowBounds.isEmpty()) {
+            GraphicsConfiguration largestIntersectionGraphicsConfiguration =
+                    findGraphicsConfigurationWithLargestIntersection(windowBounds);
+            if (largestIntersectionGraphicsConfiguration != null) {
+                return largestIntersectionGraphicsConfiguration;
+            }
+
+            Point windowCenter = new Point(
+                    windowBounds.x + windowBounds.width / 2,
+                    windowBounds.y + windowBounds.height / 2
+            );
+
+            GraphicsConfiguration centerGraphicsConfiguration = findGraphicsConfiguration(windowCenter);
+            if (centerGraphicsConfiguration != null) {
+                return centerGraphicsConfiguration;
+            }
+        }
+
+        GraphicsConfiguration currentGraphicsConfiguration = window.getGraphicsConfiguration();
+        if (currentGraphicsConfiguration != null) {
+            return currentGraphicsConfiguration;
+        }
+
+        return getDefaultGraphicsConfiguration();
+    }
+
+    private static GraphicsConfiguration findGraphicsConfigurationWithLargestIntersection(Rectangle windowBounds) {
+        GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
+
+        GraphicsConfiguration bestGraphicsConfiguration = null;
+        long bestIntersectionArea = 0;
+
+        for (GraphicsDevice screenDevice : graphicsEnvironment.getScreenDevices()) {
+            GraphicsConfiguration graphicsConfiguration = screenDevice.getDefaultConfiguration();
+            Rectangle intersection = graphicsConfiguration.getBounds().intersection(windowBounds);
+
+            long intersectionArea = (long) Math.max(0, intersection.width)
+                    * Math.max(0, intersection.height);
+
+            if (intersectionArea > bestIntersectionArea) {
+                bestIntersectionArea = intersectionArea;
+                bestGraphicsConfiguration = graphicsConfiguration;
+            }
+        }
+
+        return bestGraphicsConfiguration;
+    }
+
+    private static GraphicsConfiguration getDefaultGraphicsConfiguration() {
+        return GraphicsEnvironment
+                .getLocalGraphicsEnvironment()
+                .getDefaultScreenDevice()
+                .getDefaultConfiguration();
     }
 
     /**
@@ -408,10 +476,7 @@ public class App {
             LOGGER.warning("Cannot resolve pointer screen in headless environment: " + e.getMessage());
         }
 
-        return GraphicsEnvironment
-                .getLocalGraphicsEnvironment()
-                .getDefaultScreenDevice()
-                .getDefaultConfiguration();
+        return getDefaultGraphicsConfiguration();
     }
 
     private static GraphicsConfiguration findGraphicsConfiguration(Point point) {

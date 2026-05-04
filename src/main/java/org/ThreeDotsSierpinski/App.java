@@ -30,7 +30,9 @@ public class App {
 
     private static final String BUTTON_PLAY = "► Play";
     private static final String BUTTON_STOP = "Stop";
-    private static final String BUTTON_FINISH_VISUALIZATION = "Закончить визуализацию";
+    private static final String BUTTON_TEST_VALUES_QUALITY = "Test RNG";
+    private static final String BUTTON_TEST_VALUES_QUALITY_TOOLTIP = "Test values quality";
+    private static final String BUTTON_FINISH_VISUALIZATION = "Выйти";
 
     private static final int STATUS_PANEL_HORIZONTAL_GAP = 10;
     private static final int STATUS_PANEL_VERTICAL_GAP = 5;
@@ -38,10 +40,11 @@ public class App {
     private static final int STATUS_LABEL_HEIGHT = 20;
     private static final int RNG_FONT_SIZE = 11;
     private static final int RNG_SPACER_WIDTH = 5;
-    private static final int TEST_BUTTON_WIDTH = 160;
+    private static final int TEST_BUTTON_WIDTH = 95;
     private static final int SAVE_BUTTON_WIDTH = 100;
-    private static final int FINISH_BUTTON_WIDTH = 180;
+    private static final int FINISH_BUTTON_WIDTH = 78;
     private static final int STATUS_BUTTON_HEIGHT = 28;
+    private static final int STATUS_SCROLL_UNIT_INCREMENT = 16;
     private static final int INITIAL_DATA_TIMEOUT_MS = 15_000;
 
     private static final Logger LOGGER = LoggerConfig.getLogger();
@@ -155,7 +158,8 @@ public class App {
         rngToggle.addChangeListener(e -> syncToggleLabel.run());
         syncToggleLabel.run();
 
-        var testButton = new JButton("Проверить качество");
+        var testButton = new JButton(BUTTON_TEST_VALUES_QUALITY);
+        testButton.setToolTipText(BUTTON_TEST_VALUES_QUALITY_TOOLTIP);
         testButton.setPreferredSize(new Dimension(TEST_BUTTON_WIDTH, STATUS_BUTTON_HEIGHT));
         statusPanel.add(testButton);
 
@@ -169,9 +173,27 @@ public class App {
 
         var finishButton = new JButton(BUTTON_FINISH_VISUALIZATION);
         finishButton.setPreferredSize(new Dimension(FINISH_BUTTON_WIDTH, STATUS_BUTTON_HEIGHT));
-        statusPanel.add(finishButton);
 
-        frame.add(statusPanel, BorderLayout.SOUTH);
+        var controlsScrollPane = new JScrollPane(
+                statusPanel,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        );
+        controlsScrollPane.setBorder(null);
+        controlsScrollPane.getHorizontalScrollBar().setUnitIncrement(STATUS_SCROLL_UNIT_INCREMENT);
+
+        var exitPanel = new JPanel(new FlowLayout(
+                FlowLayout.RIGHT,
+                STATUS_PANEL_HORIZONTAL_GAP,
+                STATUS_PANEL_VERTICAL_GAP
+        ));
+        exitPanel.add(finishButton);
+
+        var bottomPanel = new JPanel(new BorderLayout());
+        bottomPanel.add(controlsScrollPane, BorderLayout.CENTER);
+        bottomPanel.add(exitPanel, BorderLayout.EAST);
+
+        frame.add(bottomPanel, BorderLayout.SOUTH);
 
         frame.setSize(finalWidth, finalHeight);
         centerWindowOnGraphicsConfiguration(frame, targetGraphicsConfiguration);

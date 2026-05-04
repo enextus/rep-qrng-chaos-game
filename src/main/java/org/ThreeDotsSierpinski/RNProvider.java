@@ -235,7 +235,7 @@ public class RNProvider {
         if (apiKey == null || apiKey.isEmpty() || apiKey.startsWith("YOUR_")) {
             LOGGER.warning("API key is not configured. Falling back to pseudo-random mode (L128X256MixRandom).");
             apiKeyConfigured = false;
-            activatePseudoMode("no API key"); // FIX: более короткий, консистентный текст
+            activatePseudoMode("no API key"); // более короткий, консистентный текст
         } else if (autoLoadOnStart) {
             // Ключ есть!
             if (isForcedPseudo) {
@@ -372,7 +372,7 @@ public class RNProvider {
             return OptionalInt.empty();
         }
 
-        addConsumedNumber(nextNumber); // <--- ИЗМЕНЕНО
+        addConsumedNumber(nextNumber);
 
         if (randomNumbersQueue.size() < queueMinSize && apiRequestCount < maxApiRequests && !isLoading) {
             loadInitialDataAsync();
@@ -403,11 +403,10 @@ public class RNProvider {
                 try {
                     loadInitialData();
 
-                    // Если не бросило исключение — УСПЕХ!
                     isReconnecting = false;
                     consecutiveFailures = 0;
                     switchToQuantumMode();
-                    notifyApiAvailability(true); // РАЗБОКЦИРОВЫВАЕМ КНОПКУ!
+                    notifyApiAvailability(true);
                     break;
                 } catch (RateLimitException e) {
                     isReconnecting = false; // Суточный лимит - нечего пинговать
@@ -466,7 +465,7 @@ public class RNProvider {
     // ========================================================================
 
     private void activatePseudoMode(String reason) {
-        // FIX: Всегда обновляем причину, даже если уже в PSEUDO
+        // Всегда обновляем причину, даже если уже в PSEUDO
         this.fallbackReason = reason;
 
         if (currentMode == Mode.PSEUDO) {
@@ -499,7 +498,6 @@ public class RNProvider {
     }
 
     private void switchToQuantumMode() {
-        // Мы больше не управляем кнопкой отсюда.
         // Кнопка активна по умолчанию (если есть ключ), замораживается только при handleLoadFailure.
         if (currentMode == Mode.QUANTUM) return;
 
@@ -522,7 +520,7 @@ public class RNProvider {
                 return;
             }
 
-            // ИЗМЕНЕНО: Разрешаем фоновую загрузку, если это старт по умолчанию (isForcedPseudo)
+            // Разрешаем фоновую загрузку, если это старт по умолчанию (isForcedPseudo)
             if (currentMode == Mode.PSEUDO && !isForcedPseudo) {
                 fillQueueWithPseudo();
                 return;
@@ -597,7 +595,7 @@ public class RNProvider {
                 || reason.contains("UnknownHostException");
         boolean isRateLimit = reason.contains("429") || reason.contains("limit") || reason.contains("Limit Exceeded");
 
-        // FIX: Rate limit = особый случай. Не пингуем бесконечно, но оставляем toggle enabled.
+        // Rate limit = особый случай. Не пингуем бесконечно, но оставляем toggle enabled.
         if (isRateLimit) {
             // Не запускаем reconnect monitor для rate limit
             LOGGER.info("Rate limit active. Reconnect monitor disabled until manual retry.");
@@ -739,5 +737,4 @@ public class RNProvider {
     private void notifyApiAvailability(boolean isAvailable) {
         listeners.forEach(listener -> listener.onApiAvailabilityChanged(isAvailable));
     }
-
 }

@@ -207,7 +207,7 @@ public class App {
             boolean running = dotController.toggle();
             playStopButton.setText(running ? BUTTON_STOP : BUTTON_PLAY);
             if (running) {
-                // FIX: показываем режим при рисовании
+                // показываем режим при рисовании
                 boolean isQuantum = rngToggle.isSelected() && rngToggle.isEnabled();
                 statusLabel.setText(isQuantum ? "Drawing... (Quantum)" : "Drawing... (Pseudo-random)");
             } else {
@@ -215,7 +215,7 @@ public class App {
             }
         });
 
-// FIX: selected=true → QUANTUM, selected=false → PSEUDO
+// selected=true → QUANTUM, selected=false → PSEUDO
         rngToggle.addActionListener(_ -> {
             // Если toggle disabled (нет API ключа), показываем диалог
             if (!rngToggle.isEnabled()) {
@@ -233,7 +233,7 @@ public class App {
 
             boolean wantsQuantum = rngToggle.isSelected();
 
-            // FIX: Проверяем rate limit перед переключением
+            // Проверяем rate limit перед переключением
             String currentReason = randomNumberProvider.getFallbackReason();
             boolean isRateLimit = currentReason != null &&
                     (currentReason.contains("429") || currentReason.contains("limit") ||

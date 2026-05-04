@@ -60,7 +60,7 @@ class RNLoadListenerImpl implements RNLoadListener {
         });
     }
 
-    // FIX: Обработка ОБОИХ направлений переключения
+    // Обработка ОБОИХ направлений переключения
     @Override
     public void onModeChanged(RNProvider.Mode mode) {
         SwingUtilities.invokeLater(() -> {
@@ -72,7 +72,7 @@ class RNLoadListenerImpl implements RNLoadListener {
     @Override
     public void onApiAvailabilityChanged(boolean isAvailable) {
         SwingUtilities.invokeLater(() -> {
-            // FIX: Не трогаем enabled/disabled здесь для сетевых ошибок.
+            // Не трогаем enabled/disabled здесь для сетевых ошибок.
             // Enabled/disabled управляется ТОЛЬКО наличием API ключа (в App.launchMainWindow).
             // Этот callback только для обновления статусных сообщений.
 

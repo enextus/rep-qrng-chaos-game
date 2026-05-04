@@ -478,6 +478,27 @@ public class DotController extends JPanel {
         return randomNumberProvider.getConsumedNumbers();
     }
 
+    /**
+     * Перерисовывает текущее состояние режима без выполнения нового animation step
+     * и без потребления новых случайных чисел.
+     */
+    public void refreshVisualization() {
+        SwingUtilities.invokeLater(() -> {
+            if (offscreenImage == null || !canvasInitialized) {
+                repaint();
+                return;
+            }
+
+            mode.redraw(
+                    offscreenImage,
+                    offscreenImage.getWidth(),
+                    offscreenImage.getHeight(),
+                    DOT_SIZE
+            );
+            repaint();
+        });
+    }
+
     public void shutdown() {
         stop();
 

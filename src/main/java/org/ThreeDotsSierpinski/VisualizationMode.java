@@ -3,6 +3,7 @@ package org.ThreeDotsSierpinski;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.List;
+import javax.swing.*;
 
 /**
  * Интерфейс для режимов визуализации случайных чисел.
@@ -53,6 +54,23 @@ public interface VisualizationMode {
 
     /** Количество потреблённых случайных чисел */
     int getRandomNumbersUsed();
+
+    /**
+     * Полная перерисовка текущего состояния без потребления новых случайных чисел.
+     * Используется mode-specific UI controls, например для скрытия/показа
+     * дополнительных визуальных слоёв.
+     */
+    default void redraw(BufferedImage canvas, int width, int height, int dotSize) {
+        // Default no-op: режимы без собственного состояния не обязаны поддерживать redraw.
+    }
+
+    /**
+     * Дополнительные UI-контролы, специфичные для конкретного режима визуализации.
+     * Например, VoronoiMode может добавить переключатель показа меток центров.
+     */
+    default List<JComponent> createModeControls(DotController controller) {
+        return List.of();
+    }
 
     /**
      * Нужна ли анимация RED→BLACK для новых точек?

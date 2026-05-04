@@ -163,6 +163,10 @@ public class App {
         saveButton.setPreferredSize(new Dimension(SAVE_BUTTON_WIDTH, STATUS_BUTTON_HEIGHT));
         statusPanel.add(saveButton);
 
+        for (JComponent modeControl : mode.createModeControls(dotController)) {
+            statusPanel.add(modeControl);
+        }
+
         var finishButton = new JButton(BUTTON_FINISH_VISUALIZATION);
         finishButton.setPreferredSize(new Dimension(FINISH_BUTTON_WIDTH, STATUS_BUTTON_HEIGHT));
         statusPanel.add(finishButton);

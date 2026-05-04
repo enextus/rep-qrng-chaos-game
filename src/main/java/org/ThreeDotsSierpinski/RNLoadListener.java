@@ -19,11 +19,13 @@ public interface RNLoadListener {
 
     /**
      * Called when the random number source mode changes.
-     * The default implementation does nothing (backward compatible).
-     *
      * @param mode current mode (QUANTUM or PSEUDO)
      */
     default void onModeChanged(RNProvider.Mode mode) {}
 
+    /**
+     * Called when API availability status changes.
+     * @param isAvailable true if API is reachable
+     */
     default void onApiAvailabilityChanged(boolean isAvailable) {}
 }

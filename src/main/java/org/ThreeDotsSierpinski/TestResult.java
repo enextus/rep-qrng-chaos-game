@@ -1,5 +1,7 @@
 package org.ThreeDotsSierpinski;
 
+import org.jetbrains.annotations.NotNull;
+
 /**
  * Результат выполнения одного теста случайности.
  *
@@ -12,10 +14,9 @@ public record TestResult(String testName, boolean passed, String statistic, Qual
 
     /**
      * Уровень качества результата теста.
-     *
-     * STRONG   — уверенно пройден, большой запас до порога
+     * STRONG — уверенно пройден, большой запас до порога
      * MARGINAL — пройден, но близко к порогу (требует внимания)
-     * FAIL     — не пройден
+     * FAIL — не пройден
      */
     public enum Quality {
         STRONG, MARGINAL, FAIL
@@ -30,11 +31,11 @@ public record TestResult(String testName, boolean passed, String statistic, Qual
     }
 
     @Override
-    public String toString() {
+    public @NotNull String toString() {
         String mark = switch (quality) {
-            case STRONG -> "\u2713";   // ✓
-            case MARGINAL -> "\u25CB"; // ○
-            case FAIL -> "\u2717";     // ✗
+            case STRONG -> "✓";   // ✓
+            case MARGINAL -> "○"; // ○
+            case FAIL -> "✗";     // ✗
         };
         return mark + "  " + statistic + "    " + testName;
     }

@@ -3,15 +3,14 @@ package org.ThreeDotsSierpinski;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.util.List;
+import javax.swing.*;
 
 /**
  * Интерфейс для режимов визуализации случайных чисел.
- *
  * Каждый режим:
  * - Получает случайные числа из RNProvider
  * - Рисует на BufferedImage
  * - Возвращает список нарисованных точек (для анимации RED→BLACK)
- *
  * Для добавления нового режима:
  * 1. Создать класс, реализующий этот интерфейс
  * 2. Зарегистрировать в {@link VisualizationMode#allModes()}
@@ -57,9 +56,26 @@ public interface VisualizationMode {
     int getRandomNumbersUsed();
 
     /**
+     * Полная перерисовка текущего состояния без потребления новых случайных чисел.
+     * Используется mode-specific UI controls, например для скрытия/показа
+     * дополнительных визуальных слоёв.
+     */
+    default void redraw(BufferedImage canvas, int width, int height, int dotSize) {
+        // Default no-op: режимы без собственного состояния не обязаны поддерживать redraw.
+    }
+
+    /**
+     * Дополнительные UI-контролы, специфичные для конкретного режима визуализации.
+     * Например, VoronoiMode может добавить переключатель показа меток центров.
+     */
+    default List<JComponent> createModeControls(DotController controller) {
+        return List.of();
+    }
+
+    /**
      * Нужна ли анимация RED→BLACK для новых точек?
-     * true = Sierpinski-style (точки сначала красные, через 1с чёрные).
-     * false = режим сам управляет цветами (DLA, Percolation и т.д.).
+     * True = Sierpinski-style (точки сначала красные, через 1с чёрные).
+     * False = режим сам управляет цветами (DLA, Percolation и т.д.).
      */
     default boolean usesRecolorAnimation() { return true; }
 
@@ -76,6 +92,7 @@ public interface VisualizationMode {
         return new VisualizationMode[] {
                 new SierpinskiMode(),
                 new DLAMode(),
+                new VoronoiMode(),
                 // Добавьте новые режимы здесь:
                 // new PercolationMode(),
                 // new BlueNoiseMode(),

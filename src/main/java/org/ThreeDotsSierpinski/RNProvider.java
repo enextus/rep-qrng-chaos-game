@@ -22,11 +22,9 @@ import java.util.random.RandomGenerator;
 
 /**
  * Класс для загрузки случайных чисел из ANU Quantum Numbers API.
- *
  * При недоступности API автоматически переключается на L128X256MixRandom
  * (LXM family, Java 17+, период 2³⁸⁴, проходит TestU01 и PractRand).
  * При восстановлении API переключается обратно на квантовые числа.
- *
  * Особенности:
  * - Неблокирующий getNextRandomNumber() — безопасен для вызова из EDT
  * - Exponential backoff при ошибках API
@@ -41,7 +39,9 @@ public class RNProvider {
      * Исключение-маркер для мгновенного переключения в PSEUDO без ретраев.
      */
     private static class RateLimitException extends RuntimeException {
-        RateLimitException(String message) { super(message); }
+        RateLimitException(String message) {
+            super(message);
+        }
     }
 
     // ========================================================================
@@ -52,9 +52,13 @@ public class RNProvider {
      * Источник случайных чисел.
      */
     public enum Mode {
-        /** Квантовые числа от ANU API */
+        /**
+         * Квантовые числа от ANU API
+         */
         QUANTUM,
-        /** Псевдослучайные числа от L128X256MixRandom (fallback) */
+        /**
+         * Псевдослучайные числа от L128X256MixRandom (fallback)
+         */
         PSEUDO
     }
 
@@ -87,36 +91,48 @@ public class RNProvider {
     private final RandomNumberProcessor numberProcessor;
     private int apiRequestCount = 0;
     private final List<RNLoadListener> listeners = new CopyOnWriteArrayList<>();
-    private volatile boolean isLoading = false;
 
     // ========================================================================
     // RING BUFFER ДЛЯ ИСТОРИИ (Вместо List<Long>)
     // ========================================================================
 
-    /** Максимальный размер истории потребленных чисел (~0.8 МБ памяти) */
+    /**
+     * Максимальный размер истории потребленных чисел (~0.8 МБ памяти)
+     */
     private static final int HISTORY_MAX_SIZE = 100_000;
 
-    /** Сам массив-буфер */
+    /**
+     * Сам массив-буфер
+     */
     private final long[] consumedNumbersRing = new long[HISTORY_MAX_SIZE];
 
-    /** Указатель, куда писать следующее число */
+    /**
+     * Указатель, куда писать следующее число
+     */
     private volatile int ringWriteIndex = 0;
 
-    /** Счетчик реально сгенерированных чисел (чтобы не возвращать пустые нули из массива) */
+    /**
+     * Счетчик реально сгенерированных чисел (чтобы не возвращать пустые нули из массива)
+     */
     private volatile int totalConsumed = 0;
-
+    private volatile boolean isLoading = false;
+    private volatile boolean isReconnecting = false;
     private volatile boolean initialLoadComplete = false;
     private volatile String lastError = null;
     private volatile String fallbackReason = null;
     private volatile int consecutiveFailures = 0;
     private volatile Mode currentMode = Mode.QUANTUM;
-    private volatile boolean isForcedPseudo = false;
+    private volatile boolean isForcedPseudo = true; // По умолчанию всегда стартуем локально
     private volatile boolean apiKeyConfigured = true;
 
-    /** Сколько pseudo-чисел генерировать за одну «подгрузку» */
+    /**
+     * Сколько pseudo-чисел генерировать за одну «подгрузку»
+     */
     private static final int PSEUDO_BATCH_SIZE = 1024;
 
-    /** После скольких pseudo-batch-ей пытаться переподключиться к API */
+    /**
+     * После скольких pseudo-batch-ей пытаться переподключиться к API
+     */
     private static final int RECONNECT_EVERY_N_BATCHES = 5;
     private volatile int pseudoBatchCount = 0;
 
@@ -128,11 +144,20 @@ public class RNProvider {
         if (forced) {
             currentMode = Mode.PSEUDO;
             fallbackReason = "Manually forced to PSEUDO";
+            isReconnecting = false;
             notifyModeChanged(Mode.PSEUDO);
         } else {
-            // При отключении принудительного режима - пробуем снова подключиться к API
+            // Юзер кликнул ВПРАВО (QUANTUM)
+            if (!apiKeyConfigured) {
+                // Нет ключа — не даём переключиться
+                notifyModeChanged(Mode.PSEUDO); // Сигнализируем, что остались в PSEUDO
+                return;
+            }
+
             fallbackReason = null;
-            loadInitialDataAsync();
+            currentMode = Mode.QUANTUM;
+            isReconnecting = false;
+            loadInitialDataAsync(); // Попытка подключиться
         }
     }
 
@@ -206,13 +231,19 @@ public class RNProvider {
         objectMapper = new ObjectMapper();
         numberProcessor = new RandomNumberProcessor();
 
-        // Проверка наличия API ключа
+// Проверка наличия API ключа
         if (apiKey == null || apiKey.isEmpty() || apiKey.startsWith("YOUR_")) {
             LOGGER.warning("API key is not configured. Falling back to pseudo-random mode (L128X256MixRandom).");
             apiKeyConfigured = false;
-            activatePseudoMode("API key not configured");
+            activatePseudoMode("no API key"); // более короткий, консистентный текст
         } else if (autoLoadOnStart) {
-            loadInitialDataAsync();
+            // Ключ есть!
+            if (isForcedPseudo) {
+                activatePseudoMode("Default local mode"); // Стартуем визуально как PSEUDO
+                loadInitialDataAsync(); // Запускаем фоновую загрузку
+            } else {
+                loadInitialDataAsync();
+            }
         }
     }
 
@@ -234,7 +265,9 @@ public class RNProvider {
         return initialLoadComplete;
     }
 
-    /** Проверяет, был ли изначально сконфигурирован API ключ */
+    /**
+     * Проверяет, был ли изначально сконфигурирован API ключ
+     */
     public boolean isApiKeyConfigured() {
         return apiKeyConfigured;
     }
@@ -247,22 +280,30 @@ public class RNProvider {
         return randomNumbersQueue.size();
     }
 
-    /** Текущий режим работы: QUANTUM или PSEUDO */
+    /**
+     * Текущий режим работы: QUANTUM или PSEUDO
+     */
     public Mode getMode() {
         return currentMode;
     }
 
-    /** Возвращает причину последнего переключения в PSEUDO режим */
+    /**
+     * Возвращает причину последнего переключения в PSEUDO режим
+     */
     public String getFallbackReason() {
         return fallbackReason;
     }
 
-    /** Возвращает неизменяемую копию всех доступных потребленных чисел (до HISTORY_MAX_SIZE). */
+    /**
+     * Возвращает неизменяемую копию всех доступных потребленных чисел (до HISTORY_MAX_SIZE).
+     */
     public List<Long> getConsumedNumbers() {
         return getLastConsumedNumbers(HISTORY_MAX_SIZE);
     }
 
-    /** Возвращает последние N потребленных чисел (для UI без лагов). */
+    /**
+     * Возвращает последние N потребленных чисел (для UI без лагов).
+     */
     public List<Long> getLastConsumedNumbers(int limit) {
         int actualSize = Math.min(limit, Math.min(totalConsumed, HISTORY_MAX_SIZE));
         if (actualSize <= 0) return List.of();
@@ -331,7 +372,7 @@ public class RNProvider {
             return OptionalInt.empty();
         }
 
-        addConsumedNumber(nextNumber); // <--- ИЗМЕНЕНО
+        addConsumedNumber(nextNumber);
 
         if (randomNumbersQueue.size() < queueMinSize && apiRequestCount < maxApiRequests && !isLoading) {
             loadInitialDataAsync();
@@ -340,12 +381,50 @@ public class RNProvider {
         return OptionalInt.of(nextNumber);
     }
 
+    /**
+     * Фоновая задача: раз в 15 секунд пытается достучаться до API.
+     * Если успешно — переключает обратно в QUANTUM и разблокирует UI.
+     */
+    private void startReconnectMonitor() {
+        if (isReconnecting) return; // Если уже пингуем - не создаем еще один поток
+        isReconnecting = true;
+
+        Thread.startVirtualThread(() -> {
+            while (isReconnecting && currentMode == Mode.PSEUDO) {
+                try {
+                    Thread.sleep(15000); // Ждем 15 секунд
+                } catch (InterruptedException e) {
+                    break;
+                }
+
+                if (!isReconnecting) break;
+
+                LOGGER.info("Background reconnect attempt...");
+                try {
+                    loadInitialData();
+
+                    isReconnecting = false;
+                    consecutiveFailures = 0;
+                    switchToQuantumMode();
+                    notifyApiAvailability(true);
+                    break;
+                } catch (RateLimitException e) {
+                    isReconnecting = false; // Суточный лимит - нечего пинговать
+                    break;
+                } catch (Exception e) {
+                    LOGGER.fine("Reconnect failed, will retry in 15s: " + e.getMessage());
+                }
+            }
+        });
+    }
+
     public long getNextRandomNumberInRange(long min, long max) {
         int randomNum = getNextRandomNumber().orElseThrow();
         return numberProcessor.generateNumberInRange(randomNum, min, max);
     }
 
     public void shutdown() {
+        isReconnecting = false; // <--- ДОБАВИТЬ
         LOGGER.info("RNProvider shutting down. Mode: " + currentMode
                 + ", API requests: " + apiRequestCount
                 + ", pseudo batches: " + pseudoBatchCount);
@@ -355,10 +434,17 @@ public class RNProvider {
     // Package-private accessors
     // ========================================================================
 
-    int getApiRequestCount() { return apiRequestCount; }
-    boolean isInitialLoadComplete() { return initialLoadComplete; }
+    int getApiRequestCount() {
+        return apiRequestCount;
+    }
 
-    void triggerLoad() { loadInitialDataAsync(); }
+    boolean isInitialLoadComplete() {
+        return initialLoadComplete;
+    }
+
+    void triggerLoad() {
+        loadInitialDataAsync();
+    }
 
     // ========================================================================
     // Внутренняя логика Ring Buffer
@@ -379,10 +465,19 @@ public class RNProvider {
     // ========================================================================
 
     private void activatePseudoMode(String reason) {
-        if (currentMode == Mode.PSEUDO) return;
+        // Всегда обновляем причину, даже если уже в PSEUDO
+        this.fallbackReason = reason;
+
+        if (currentMode == Mode.PSEUDO) {
+            // Уже в PSEUDO — просто обновляем причину и дозаполняем буфер если нужно
+            LOGGER.info("Updated PSEUDO fallback reason: " + reason);
+            if (randomNumbersQueue.size() < queueMinSize) {
+                fillQueueWithPseudo();
+            }
+            return;
+        }
 
         currentMode = Mode.PSEUDO;
-        this.fallbackReason = reason;
         lastError = null;
         LOGGER.info("Switched to PSEUDO mode (L128X256MixRandom). Reason: " + reason);
 
@@ -403,12 +498,13 @@ public class RNProvider {
     }
 
     private void switchToQuantumMode() {
+        // Кнопка активна по умолчанию (если есть ключ), замораживается только при handleLoadFailure.
         if (currentMode == Mode.QUANTUM) return;
 
         currentMode = Mode.QUANTUM;
         pseudoBatchCount = 0;
         LOGGER.info("Switched back to QUANTUM mode (ANU API).");
-        notifyModeChanged(Mode.QUANTUM);
+        notifyModeChanged(RNProvider.Mode.QUANTUM);
     }
 
     // ========================================================================
@@ -416,10 +512,6 @@ public class RNProvider {
     // ========================================================================
 
     private void loadInitialDataAsync() {
-        if (isForcedPseudo) {
-            return;
-        }
-
         synchronized (this) {
             if (isLoading || apiRequestCount >= maxApiRequests) {
                 if (apiRequestCount >= maxApiRequests && currentMode == Mode.QUANTUM) {
@@ -428,7 +520,8 @@ public class RNProvider {
                 return;
             }
 
-            if (currentMode == Mode.PSEUDO) {
+            // Разрешаем фоновую загрузку, если это старт по умолчанию (isForcedPseudo)
+            if (currentMode == Mode.PSEUDO && !isForcedPseudo) {
                 fillQueueWithPseudo();
                 return;
             }
@@ -497,14 +590,34 @@ public class RNProvider {
     }
 
     private void handleLoadFailure(String reason) {
+        boolean isNetworkDown = reason.contains("Connection refused")
+                || reason.contains("timed out")
+                || reason.contains("UnknownHostException");
+        boolean isRateLimit = reason.contains("429") || reason.contains("limit") || reason.contains("Limit Exceeded");
+
+        // Rate limit = особый случай. Не пингуем бесконечно, но оставляем toggle enabled.
+        if (isRateLimit) {
+            // Не запускаем reconnect monitor для rate limit
+            LOGGER.info("Rate limit active. Reconnect monitor disabled until manual retry.");
+        }
+
         if (currentMode == Mode.QUANTUM) {
             activatePseudoMode(reason);
-            notifyApiAvailability(false); // <--- ДОБАВИТЬ: Замораживаем и двигаем кнопку влево
         } else {
-            if (randomNumbersQueue.size() < queueMinSize) {
-                fillQueueWithPseudo();
-            }
+            // Уже в PSEUDO — обновляем причину (см. activatePseudoMode выше)
+            activatePseudoMode(reason);
         }
+
+        // Запускаем фоновый пинг только для сетевых ошибок, НЕ для rate limit
+        if (apiKeyConfigured && !isRateLimit && !isNetworkDown) {
+            // Для "мягких" ошибок — пингуем
+            startReconnectMonitor();
+        }
+        // Для isNetworkDown — тоже пингуем (сеть может восстановиться)
+        if (apiKeyConfigured && isNetworkDown) {
+            startReconnectMonitor();
+        }
+        // Для isRateLimit — НЕ пингуем (бессмысленно, лимит не сбросится через 15 сек)
     }
 
     long calculateBackoff(int retryAttempt) {
@@ -578,7 +691,7 @@ public class RNProvider {
                 initialLoadComplete = true;
                 lastError = null;
             }
-            notifyApiAvailability(true); // <--- ДОБАВИТЬ: Размораживаем кнопку
+
             notifyRawDataReceived(responseBody);
             notifyLoadingCompleted();
 
@@ -624,5 +737,4 @@ public class RNProvider {
     private void notifyApiAvailability(boolean isAvailable) {
         listeners.forEach(listener -> listener.onApiAvailabilityChanged(isAvailable));
     }
-
 }

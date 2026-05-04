@@ -4,13 +4,11 @@ import java.awt.Point;
 
 /**
  * Алгоритм построения фрактала Серпинского методом "Chaos Game".
- *
  * Правила:
  * 1. Начинаем с произвольной точки внутри треугольника
  * 2. По случайному числу выбираем одну из трёх вершин (modulo 3)
  * 3. Перемещаемся на половину расстояния к выбранной вершине
  * 4. Повторяем шаги 2-3
- *
  * Этот класс содержит только математику — никаких зависимостей от Swing/UI.
  */
 public class SierpinskiAlgorithm {
@@ -43,7 +41,6 @@ public class SierpinskiAlgorithm {
 
     /**
      * Вычисляет новую позицию точки по алгоритму Chaos Game.
-     *
      * Использует modulo 3 для абсолютно равномерного выбора вершины,
      * независимо от диапазона случайных чисел.
      *
@@ -64,13 +61,6 @@ public class SierpinskiAlgorithm {
                 (currentPoint.x + target.x) / 2,
                 (currentPoint.y + target.y) / 2
         );
-    }
-
-    /**
-     * Возвращает начальную точку (центр области рисования).
-     */
-    public Point getStartingPoint() {
-        return new Point(vertexA.x, (vertexB.y + vertexA.y) / 2);
     }
 
     public Point getVertexA() { return new Point(vertexA); }

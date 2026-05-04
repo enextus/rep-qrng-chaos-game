@@ -118,6 +118,20 @@ class RNProviderIntegrationTest {
     }
 
     /**
+     * Создаёт провайдера в QUANTUM-режиме (сбрасывает forced pseudo) и запускает загрузку.
+     * Используется в тестах, которые проверяют работу с API.
+     */
+    private RNProvider createQuantumProvider() {
+        return createQuantumProvider(testSettings());
+    }
+
+    private RNProvider createQuantumProvider(RNProvider.ProviderSettings settings) {
+        RNProvider provider = new RNProvider(settings, false, INSTANT_SLEEPER);
+        provider.setForcedPseudo(false); // Переключаем в QUANTUM и запускаем загрузку
+        return provider;
+    }
+
+    /**
      * Настраивает mock-сервер для ответа фиксированным JSON.
      */
     private void mockSuccess(String responseJson) {
@@ -191,9 +205,8 @@ class RNProviderIntegrationTest {
         @DisplayName("uint16 — парсит массив целых чисел")
         void testLoadUint16() throws Exception {
             mockSuccess("{\"data\":[100,200,300,400,500]}");
-            RNProvider provider = createProvider();
+            RNProvider provider = createQuantumProvider();
 
-            provider.triggerLoad();
             assertTrue(provider.waitForInitialData(5000), "Должен загрузить данные за 5 сек");
 
             assertEquals(100, provider.getNextRandomNumber().getAsInt());
@@ -206,9 +219,8 @@ class RNProviderIntegrationTest {
         void testLoadHex16() throws Exception {
             // "FF" = 255, "1A2B" = 6699, "0000" = 0
             mockSuccess("{\"data\":[\"FF\",\"1A2B\",\"0000\"]}");
-            RNProvider provider = createProvider("hex16");
+            RNProvider provider = createQuantumProvider(testSettings("hex16"));
 
-            provider.triggerLoad();
             assertTrue(provider.waitForInitialData(5000));
 
             assertEquals(255, provider.getNextRandomNumber().getAsInt());
@@ -227,7 +239,7 @@ class RNProviderIntegrationTest {
             json.append("]}");
 
             mockSuccess(json.toString());
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
 
             assertTrue(provider.waitForInitialData(5000));
             assertEquals(100, provider.getQueueSize());
@@ -252,7 +264,7 @@ class RNProviderIntegrationTest {
                 sendResponse(exchange, 200, "{\"data\":[42]}");
             });
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
             assertTrue(provider.waitForInitialData(5000));
 
             assertEquals("test-api-key", capturedApiKey.get(),
@@ -269,10 +281,11 @@ class RNProviderIntegrationTest {
                 sendResponse(exchange, 200, "{\"data\":[1]}");
             });
 
-            RNProvider provider = new RNProvider(testSettings("uint16"), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings("uint16"));
             assertTrue(provider.waitForInitialData(5000));
 
             String query = capturedQuery.get();
+            assertNotNull(query, "Query string не должен быть null");
             assertTrue(query.contains("length=5"), "Должен содержать length=5, получено: " + query);
             assertTrue(query.contains("type=uint16"), "Должен содержать type=uint16, получено: " + query);
             assertFalse(query.contains("size="), "uint16 не должен содержать size, получено: " + query);
@@ -288,10 +301,11 @@ class RNProviderIntegrationTest {
                 sendResponse(exchange, 200, "{\"data\":[\"ABCD\"]}");
             });
 
-            RNProvider provider = new RNProvider(testSettings("hex16"), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings("hex16"));
             assertTrue(provider.waitForInitialData(5000));
 
             String query = capturedQuery.get();
+            assertNotNull(query, "Query string не должен быть null");
             assertTrue(query.contains("type=hex16"), "Должен содержать type=hex16");
             assertTrue(query.contains("size=2"), "hex16 должен содержать size=2");
         }
@@ -319,7 +333,7 @@ class RNProviderIntegrationTest {
                 }
             });
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
             assertTrue(provider.waitForInitialData(5000), "Должен загрузить после retry");
             assertEquals(2, requestCount.get(), "Должно быть 2 запроса (1 fail + 1 success)");
             assertEquals(42, provider.getNextRandomNumber().getAsInt());
@@ -330,7 +344,7 @@ class RNProviderIntegrationTest {
         void testAllRetriesExhausted() throws Exception {
             mockStatus(500, "Server Down");
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
 
             // Ждём пока retry-цикл завершится и сработает fallback
             long start = System.currentTimeMillis();
@@ -342,6 +356,7 @@ class RNProviderIntegrationTest {
                     "Должен переключиться в PSEUDO после исчерпания retry");
             assertNull(provider.getLastError(),
                     "В PSEUDO режиме не должно быть ошибок, приложение продолжает работу");
+            provider.shutdown(); // Останавливаем фоновый reconnect-monitor
         }
 
         @Test
@@ -358,7 +373,7 @@ class RNProviderIntegrationTest {
                 }
             });
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
             assertTrue(provider.waitForInitialData(5000));
             assertEquals(3, requestCount.get(), "Должно быть 3 запроса (2 fail + 1 success)");
             assertNull(provider.getLastError(), "lastError должен быть сброшен после успеха");
@@ -378,7 +393,7 @@ class RNProviderIntegrationTest {
         void testMalformedJson() throws Exception {
             mockSuccess("THIS IS NOT JSON {{{");
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
 
             // Ждём пока ретраи исчерпаются и сработает fallback
             long start = System.currentTimeMillis();
@@ -389,6 +404,7 @@ class RNProviderIntegrationTest {
             assertEquals(RNProvider.Mode.PSEUDO, provider.getMode(),
                     "При Malformed JSON должен уйти в PSEUDO");
             assertNull(provider.getLastError(), "В PSEUDO режиме ошибки сбрасываются");
+            provider.shutdown(); // Останавливаем фоновый reconnect-monitor
         }
 
         @Test
@@ -396,7 +412,7 @@ class RNProviderIntegrationTest {
         void testApiMessageError() throws Exception {
             mockSuccess("{\"message\":\"Rate limit exceeded\"}");
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
 
             long start = System.currentTimeMillis();
             while (provider.getMode() == RNProvider.Mode.QUANTUM && System.currentTimeMillis() - start < 5000) {
@@ -406,6 +422,7 @@ class RNProviderIntegrationTest {
             assertEquals(RNProvider.Mode.PSEUDO, provider.getMode(),
                     "При API error должен уйти в PSEUDO");
             assertNull(provider.getLastError());
+            provider.shutdown(); // Останавливаем фоновый reconnect-monitor
         }
 
         @Test
@@ -413,7 +430,7 @@ class RNProviderIntegrationTest {
         void testEmptyDataArray() throws Exception {
             mockSuccess("{\"data\":[]}");
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
             assertTrue(provider.waitForInitialData(5000));
             // data пуст → queue пуст, но initialLoadComplete = true
             assertEquals(0, provider.getQueueSize());
@@ -424,7 +441,7 @@ class RNProviderIntegrationTest {
         void testUnexpectedResponseFormat() throws Exception {
             mockSuccess("{\"something\":\"else\"}");
 
-            RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+            RNProvider provider = createQuantumProvider(testSettings());
 
             long start = System.currentTimeMillis();
             while (provider.getMode() == RNProvider.Mode.QUANTUM && System.currentTimeMillis() - start < 5000) {
@@ -434,6 +451,7 @@ class RNProviderIntegrationTest {
             assertEquals(RNProvider.Mode.PSEUDO, provider.getMode(),
                     "При неожиданном ответе должен уйти в PSEUDO");
             assertNull(provider.getLastError());
+            provider.shutdown(); // Останавливаем фоновый reconnect-monitor
         }
 
         // ========================================================================
@@ -448,8 +466,8 @@ class RNProviderIntegrationTest {
             @DisplayName("Пустой буфер → возвращает OptionalInt.empty() без исключений")
             void testEmptyBufferReturnsEmpty() {
                 mockSuccess("{\"data\":[]}");
-                RNProvider provider = createProvider();
-                // Не запускаем загрузку -> буфер пуст, режим QUANTUM
+                RNProvider provider = createQuantumProvider();
+                // Загрузка запустилась, но data пуст → queue пуст
 
                 // Теперь метод НЕ должен бросать исключение, он должен вернуть пустой Optional
                 OptionalInt result = provider.getNextRandomNumber();
@@ -472,7 +490,7 @@ class RNProviderIntegrationTest {
 
                 // Первый запрос — успех, загружает 2 числа
                 mockSuccess("{\"data\":[10,20]}");
-                RNProvider provider = new RNProvider(settings, true, INSTANT_SLEEPER);
+                RNProvider provider = createQuantumProvider(settings);
                 assertTrue(provider.waitForInitialData(5000));
 
                 // Потребляем оба числа (буфер пуст)
@@ -489,13 +507,14 @@ class RNProviderIntegrationTest {
                         "Должен переключиться в PSEUDO при запросе числа после исчерпания лимита");
                 assertTrue(pseudoNum >= 0 && pseudoNum <= 65535,
                         "Должно вернуться псевдослучайное число, а не исключение. Получено: " + pseudoNum);
+                provider.shutdown(); // Останавливаем фоновый reconnect-monitor
             }
 
             @Test
             @DisplayName("getNextRandomNumberInRange() делегирует в RandomNumberProcessor")
             void testGetNextRandomNumberInRange() throws Exception {
                 mockSuccess("{\"data\":[0,32768,65535]}");
-                RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+                RNProvider provider = createQuantumProvider(testSettings());
                 assertTrue(provider.waitForInitialData(5000));
 
                 // 0 → min диапазона, 65535 → max диапазона
@@ -522,9 +541,10 @@ class RNProviderIntegrationTest {
                 mockSuccess("{\"data\":[42]}");
                 RecordingListener listener = new RecordingListener();
 
-                RNProvider provider = createProvider();
+                // Важно: создаём без автозагрузки, регистрируем listener, затем запускаем
+                RNProvider provider = new RNProvider(testSettings(), false, INSTANT_SLEEPER);
                 provider.addDataLoadListener(listener);
-                provider.triggerLoad(); // Загрузка ПОСЛЕ регистрации listener
+                provider.setForcedPseudo(false); // Запускаем загрузку ПОСЛЕ регистрации listener
 
                 assertTrue(listener.completedLatch.await(5, TimeUnit.SECONDS),
                         "onLoadingCompleted должен быть вызван");
@@ -543,9 +563,9 @@ class RNProviderIntegrationTest {
                 mockStatus(500, "Server Error");
                 RecordingListener listener = new RecordingListener();
 
-                RNProvider provider = createProvider();
+                RNProvider provider = new RNProvider(testSettings(), false, INSTANT_SLEEPER);
                 provider.addDataLoadListener(listener);
-                provider.triggerLoad(); // Загрузка ПОСЛЕ регистрации listener
+                provider.setForcedPseudo(false); // Запускаем загрузку ПОСЛЕ регистрации listener
 
                 // Ждём завершения retry-цикла
                 long start = System.currentTimeMillis();
@@ -557,6 +577,7 @@ class RNProviderIntegrationTest {
                 assertTrue(listener.events.contains("error"), "Должен вызвать onError");
                 assertTrue(listener.errors.size() >= 2,
                         "Должно быть несколько ошибок (retry), получено: " + listener.errors.size());
+                provider.shutdown(); // Останавливаем фоновый reconnect-monitor
             }
         }
 
@@ -677,7 +698,7 @@ class RNProviderIntegrationTest {
             @DisplayName("Возвращает true при успешной загрузке")
             void testWaitReturnsTrue() throws Exception {
                 mockSuccess("{\"data\":[1,2,3]}");
-                RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+                RNProvider provider = createQuantumProvider(testSettings());
 
                 assertTrue(provider.waitForInitialData(5000));
                 assertTrue(provider.isInitialLoadComplete());
@@ -695,8 +716,9 @@ class RNProviderIntegrationTest {
                     sendResponse(exchange, 200, "{\"data\":[1]}");
                 });
 
-                RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+                RNProvider provider = createQuantumProvider(testSettings());
                 assertFalse(provider.waitForInitialData(500), "Должен вернуть false при timeout");
+                provider.shutdown(); // Останавливаем фоновый reconnect-monitor
             }
         }
 
@@ -725,7 +747,8 @@ class RNProviderIntegrationTest {
 
                 RNProvider.Sleeper recordingSleeper = ms -> capturedSleeps.add(ms);
 
-                RNProvider provider = new RNProvider(testSettings(), true, recordingSleeper);
+                RNProvider provider = new RNProvider(testSettings(), false, recordingSleeper);
+                provider.setForcedPseudo(false); // Запускаем загрузку
                 assertTrue(provider.waitForInitialData(5000));
 
                 assertEquals(2, capturedSleeps.size(), "Должно быть 2 вызова sleep (2 retry)");
@@ -770,7 +793,7 @@ class RNProviderIntegrationTest {
                 json.append("]}");
                 mockSuccess(json.toString());
 
-                RNProvider provider = new RNProvider(testSettings(), true, INSTANT_SLEEPER);
+                RNProvider provider = createQuantumProvider(testSettings());
                 assertTrue(provider.waitForInitialData(5000));
 
                 int threadCount = 10;

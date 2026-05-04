@@ -4,7 +4,6 @@ import java.util.List;
 
 /**
  * NIST Runs Test.
- *
  * Проверяет количество серий (переходов 0→1, 1→0) в битовой последовательности.
  */
 public class RunsBitTest implements RandomnessTest {

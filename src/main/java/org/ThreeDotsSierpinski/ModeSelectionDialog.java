@@ -11,7 +11,14 @@ import java.awt.*;
  */
 public class ModeSelectionDialog {
 
+    private static final String DIALOG_TITLE = "Quantum Random Visualizer";
+
     private VisualizationMode selectedMode = null;
+    private GraphicsConfiguration lastDialogGraphicsConfiguration = null;
+
+    public GraphicsConfiguration getLastDialogGraphicsConfiguration() {
+        return lastDialogGraphicsConfiguration;
+    }
 
     /**
      * Показывает диалог и ждёт выбора.
@@ -20,9 +27,29 @@ public class ModeSelectionDialog {
      * @return выбранный режим, или null если закрыли без выбора
      */
     public VisualizationMode showAndWait(JFrame parent) {
+        GraphicsConfiguration targetGraphicsConfiguration = parent == null
+                ? null
+                : parent.getGraphicsConfiguration();
+
+        return showAndWait(parent, targetGraphicsConfiguration);
+    }
+
+    /**
+     * Показывает диалог и центрирует его на указанном мониторе.
+     *
+     * @param parent                      родительский фрейм (может быть null)
+     * @param targetGraphicsConfiguration целевой монитор/экран
+     * @return выбранный режим, или null если закрыли без выбора
+     */
+    public VisualizationMode showAndWait(
+            JFrame parent,
+            GraphicsConfiguration targetGraphicsConfiguration
+    ) {
+        selectedMode = null;
+        lastDialogGraphicsConfiguration = targetGraphicsConfiguration;
         var modes = VisualizationMode.allModes();
 
-        var dialog = new JDialog(parent, "Quantum Random Visualizer", true);
+        var dialog = new JDialog(parent, DIALOG_TITLE, true);
         dialog.setLayout(new BorderLayout(0, 0));
         dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
@@ -31,7 +58,7 @@ public class ModeSelectionDialog {
         header.setBorder(BorderFactory.createEmptyBorder(20, 24, 10, 24));
         header.setBackground(new Color(245, 245, 242));
 
-        var title = new JLabel("Quantum Random Visualizer");
+        var title = new JLabel(DIALOG_TITLE);
         title.setFont(new Font("SansSerif", Font.BOLD, 20));
         header.add(title, BorderLayout.WEST);
 
@@ -72,10 +99,129 @@ public class ModeSelectionDialog {
         // Размер и позиционирование
         dialog.setSize(640, 180 + modes.length * 110);
         dialog.setMinimumSize(new Dimension(400, 300));
-        dialog.setLocationRelativeTo(parent);
+        centerDialog(dialog, parent, targetGraphicsConfiguration);
         dialog.setVisible(true); // Блокирует до закрытия (modal)
 
+        lastDialogGraphicsConfiguration = resolveDialogGraphicsConfiguration(dialog);
+
         return selectedMode;
+    }
+
+
+    /**
+     * Возвращает монитор, на котором фактически находился диалог выбора режима
+     * в момент выбора карточки/закрытия. Это нужно для multi-monitor workflow:
+     * если пользователь перетащил main UI выбора режима на другой монитор,
+     * окно визуализации должно открыться именно там.
+     */
+    private static GraphicsConfiguration resolveDialogGraphicsConfiguration(Window dialog) {
+        if (dialog == null) {
+            return getDefaultGraphicsConfiguration();
+        }
+
+        Rectangle dialogBounds = dialog.getBounds();
+
+        if (dialogBounds != null && !dialogBounds.isEmpty()) {
+            GraphicsConfiguration largestIntersectionGraphicsConfiguration =
+                    findGraphicsConfigurationWithLargestIntersection(dialogBounds);
+            if (largestIntersectionGraphicsConfiguration != null) {
+                return largestIntersectionGraphicsConfiguration;
+            }
+
+            Point dialogCenter = new Point(
+                    dialogBounds.x + dialogBounds.width / 2,
+                    dialogBounds.y + dialogBounds.height / 2
+            );
+
+            GraphicsConfiguration centerGraphicsConfiguration = findGraphicsConfiguration(dialogCenter);
+            if (centerGraphicsConfiguration != null) {
+                return centerGraphicsConfiguration;
+            }
+        }
+
+        GraphicsConfiguration currentGraphicsConfiguration = dialog.getGraphicsConfiguration();
+        if (currentGraphicsConfiguration != null) {
+            return currentGraphicsConfiguration;
+        }
+
+        return getDefaultGraphicsConfiguration();
+    }
+
+    private static GraphicsConfiguration findGraphicsConfigurationWithLargestIntersection(Rectangle windowBounds) {
+        GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
+
+        GraphicsConfiguration bestGraphicsConfiguration = null;
+        long bestIntersectionArea = 0;
+
+        for (GraphicsDevice screenDevice : graphicsEnvironment.getScreenDevices()) {
+            GraphicsConfiguration graphicsConfiguration = screenDevice.getDefaultConfiguration();
+            Rectangle intersection = graphicsConfiguration.getBounds().intersection(windowBounds);
+
+            long intersectionArea = (long) Math.max(0, intersection.width)
+                    * Math.max(0, intersection.height);
+
+            if (intersectionArea > bestIntersectionArea) {
+                bestIntersectionArea = intersectionArea;
+                bestGraphicsConfiguration = graphicsConfiguration;
+            }
+        }
+
+        return bestGraphicsConfiguration;
+    }
+
+    private static GraphicsConfiguration findGraphicsConfiguration(Point point) {
+        GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
+
+        for (GraphicsDevice screenDevice : graphicsEnvironment.getScreenDevices()) {
+            GraphicsConfiguration graphicsConfiguration = screenDevice.getDefaultConfiguration();
+            if (graphicsConfiguration.getBounds().contains(point)) {
+                return graphicsConfiguration;
+            }
+        }
+
+        return null;
+    }
+
+    private static GraphicsConfiguration getDefaultGraphicsConfiguration() {
+        return GraphicsEnvironment
+                .getLocalGraphicsEnvironment()
+                .getDefaultScreenDevice()
+                .getDefaultConfiguration();
+    }
+
+    private static void centerDialog(
+            JDialog dialog,
+            JFrame parent,
+            GraphicsConfiguration targetGraphicsConfiguration
+    ) {
+        if (parent != null) {
+            dialog.setLocationRelativeTo(parent);
+            return;
+        }
+
+        if (targetGraphicsConfiguration == null) {
+            dialog.setLocationRelativeTo(null);
+            return;
+        }
+
+        Rectangle usableBounds = getUsableScreenBounds(targetGraphicsConfiguration);
+
+        int x = usableBounds.x + Math.max(0, (usableBounds.width - dialog.getWidth()) / 2);
+        int y = usableBounds.y + Math.max(0, (usableBounds.height - dialog.getHeight()) / 2);
+
+        dialog.setLocation(x, y);
+    }
+
+    private static Rectangle getUsableScreenBounds(GraphicsConfiguration graphicsConfiguration) {
+        Rectangle bounds = graphicsConfiguration.getBounds();
+        Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(graphicsConfiguration);
+
+        return new Rectangle(
+                bounds.x + insets.left,
+                bounds.y + insets.top,
+                bounds.width - insets.left - insets.right,
+                bounds.height - insets.top - insets.bottom
+        );
     }
 
     /**

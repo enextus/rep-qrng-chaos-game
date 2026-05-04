@@ -20,6 +20,7 @@ public class ModeSelectionDialog {
      * @return выбранный режим, или null если закрыли без выбора
      */
     public VisualizationMode showAndWait(JFrame parent) {
+        selectedMode = null;
         var modes = VisualizationMode.allModes();
 
         var dialog = new JDialog(parent, "Quantum Random Visualizer", true);

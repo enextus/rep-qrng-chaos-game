@@ -4,7 +4,10 @@ import com.formdev.flatlaf.FlatLightLaf;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
 /**
@@ -18,9 +21,13 @@ public class App {
     private static final String LOG_WAITING_FOR_DATA = "Waiting for initial random numbers...";
     private static final String LOG_DATA_READY = "Initial data loaded, starting animation.";
     private static final String LOG_DATA_TIMEOUT = "Timeout waiting for initial data.";
+    private static final String LOG_NO_MODE_SELECTED = "No mode selected, exiting.";
+    private static final String LOG_SELECTED_MODE_PREFIX = "Selected mode: ";
+    private static final String LOG_VISUALIZATION_FINISHED = "Visualization finished, returning to mode selection.";
 
     private static final String BUTTON_PLAY = "► Play";
     private static final String BUTTON_STOP = "Stop";
+    private static final String BUTTON_FINISH_VISUALIZATION = "Закончить визуализацию";
 
     private static final Logger LOGGER = LoggerConfig.getLogger();
 
@@ -30,28 +37,32 @@ public class App {
         LoggerConfig.initializeLogger();
         LOGGER.info(LOG_APP_STARTED);
 
-        SwingUtilities.invokeLater(() -> {
-            var selector = new ModeSelectionDialog();
-            var selectedMode = selector.showAndWait(null);
-
-            if (selectedMode == null) {
-                LOGGER.info("No mode selected, exiting.");
-                System.exit(0);
-                return;
-            }
-            LOGGER.info("Selected mode: " + selectedMode.getName());
-
-            launchMainWindow(selectedMode);
-        });
+        SwingUtilities.invokeLater(App::showModeSelectionLoop);
     }
 
-    private static void launchMainWindow(VisualizationMode mode) {
+    private static void showModeSelectionLoop() {
+        var selector = new ModeSelectionDialog();
+        var selectedMode = selector.showAndWait(null);
+
+        if (selectedMode == null) {
+            LOGGER.info(LOG_NO_MODE_SELECTED);
+            LOGGER.info(LOG_APP_SHUTTING_DOWN);
+            System.exit(0);
+            return;
+        }
+
+        LOGGER.info(LOG_SELECTED_MODE_PREFIX + selectedMode.getName());
+        launchMainWindow(selectedMode, App::showModeSelectionLoop);
+    }
+
+    private static void launchMainWindow(VisualizationMode mode, Runnable afterFinish) {
         RNProvider randomNumberProvider = new RNProvider();
         JLabel statusLabel = new JLabel("Initializing...");
+        AtomicBoolean visualizationFinished = new AtomicBoolean(false);
 
         String windowTitle = "Quantum Visualizer — " + mode.getName();
         var frame = new JFrame(windowTitle);
-        frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.setLayout(new BorderLayout());
 
         int basePanelWidth = Config.getInt("panel.size.width");
@@ -64,6 +75,13 @@ public class App {
 
         var dotController = new DotController(randomNumberProvider, mode, statusLabel);
         frame.add(dotController, BorderLayout.CENTER);
+
+        frame.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                finishVisualization(frame, dotController, visualizationFinished, afterFinish);
+            }
+        });
 
         // Панель статуса
         var statusPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
@@ -112,6 +130,10 @@ public class App {
         var saveButton = new JButton("Save PNG");
         saveButton.setPreferredSize(new Dimension(100, 28));
         statusPanel.add(saveButton);
+
+        var finishButton = new JButton(BUTTON_FINISH_VISUALIZATION);
+        finishButton.setPreferredSize(new Dimension(180, 28));
+        statusPanel.add(finishButton);
 
         frame.add(statusPanel, BorderLayout.SOUTH);
 
@@ -247,14 +269,27 @@ public class App {
             }
         });
 
+        // Закончить визуализацию → вернуться к выбору режима
+        finishButton.addActionListener(_ ->
+                finishVisualization(frame, dotController, visualizationFinished, afterFinish)
+        );
+
         // Ожидание инициализации
         Thread.startVirtualThread(() -> {
             LOGGER.info(LOG_WAITING_FOR_DATA);
-            SwingUtilities.invokeLater(() -> statusLabel.setText("Connecting to API..."));
+            SwingUtilities.invokeLater(() -> {
+                if (!visualizationFinished.get() && frame.isDisplayable()) {
+                    statusLabel.setText("Connecting to API...");
+                }
+            });
 
             boolean dataReady = randomNumberProvider.waitForInitialData(15000);
 
             SwingUtilities.invokeLater(() -> {
+                if (visualizationFinished.get() || !frame.isDisplayable()) {
+                    return;
+                }
+
                 if (dataReady) {
                     LOGGER.info(LOG_DATA_READY);
                     var rngMode = randomNumberProvider.getMode();
@@ -306,6 +341,23 @@ public class App {
                 playStopButton.setEnabled(true);
             });
         });
+    }
+
+    private static void finishVisualization(
+            JFrame frame,
+            DotController dotController,
+            AtomicBoolean visualizationFinished,
+            Runnable afterFinish
+    ) {
+        if (!visualizationFinished.compareAndSet(false, true)) {
+            return;
+        }
+
+        dotController.shutdown();
+        frame.dispose();
+
+        LOGGER.info(LOG_VISUALIZATION_FINISHED);
+        SwingUtilities.invokeLater(afterFinish);
     }
 
     private static JPanel getJPanel(TestResult result) {

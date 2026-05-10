@@ -110,7 +110,7 @@ public class App {
         frame.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                finishVisualization(frame, dotController, visualizationFinished);
+                finishVisualization(frame, dotController, randomNumberProvider, visualizationFinished);
             }
         });
 
@@ -329,7 +329,7 @@ public class App {
 
         // Закончить визуализацию → вернуться к выбору режима
         finishButton.addActionListener(_ ->
-                finishVisualization(frame, dotController, visualizationFinished)
+                finishVisualization(frame, dotController, randomNumberProvider, visualizationFinished)
         );
 
         // Ожидание инициализации
@@ -383,8 +383,6 @@ public class App {
                     }
                 } else {
                     LOGGER.warning(LOG_DATA_TIMEOUT);
-                    String error = randomNumberProvider.getLastError();
-
                     rngToggle.setEnabled(randomNumberProvider.isApiKeyConfigured());
                     rngToggle.setSelected(false);
                     syncToggleLabel.run();
@@ -404,6 +402,7 @@ public class App {
     private static void finishVisualization(
             JFrame frame,
             DotController dotController,
+            RNProvider randomNumberProvider,
             AtomicBoolean visualizationFinished
     ) {
         if (!visualizationFinished.compareAndSet(false, true)) {
@@ -413,6 +412,7 @@ public class App {
         GraphicsConfiguration returnGraphicsConfiguration = resolveWindowGraphicsConfiguration(frame);
 
         dotController.shutdown();
+        randomNumberProvider.shutdown();
         frame.dispose();
 
         LOGGER.info(LOG_VISUALIZATION_FINISHED);

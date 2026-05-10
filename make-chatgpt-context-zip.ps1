@@ -1,11 +1,18 @@
+[CmdletBinding()]
 param(
     [string]$OutputPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $ProjectRoot
+$ProjectRoot = if ($PSScriptRoot) {
+    $PSScriptRoot
+} else {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).ProviderPath
+Set-Location -LiteralPath $ProjectRoot
 
 $Timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
@@ -15,11 +22,15 @@ if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $ProjectRoot $OutputPath
 }
 
+$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+
 $CandidatePaths = @(
     "pom.xml",
     "Readme.md",
     "README.md",
     "TEST_STATUS.md",
+    ".env.example",
+    ".gitignore",
     "src",
     "make-chatgpt-context-zip.ps1",
     "make-chatgpt-context-zip.cmd",
@@ -40,6 +51,11 @@ foreach ($CandidatePath in $CandidatePaths) {
 
     $ResolvedPath = (Resolve-Path -LiteralPath $CandidatePath).ProviderPath
 
+    # Do not accidentally add the output archive itself if a custom path matches.
+    if ([string]::Equals($ResolvedPath, $OutputPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        continue
+    }
+
     if ($SeenPaths.Add($ResolvedPath)) {
         $ExistingPaths.Add($ResolvedPath)
     }
@@ -47,6 +63,11 @@ foreach ($CandidatePath in $CandidatePaths) {
 
 if ($ExistingPaths.Count -eq 0) {
     throw "No context files found. Run this script from the project root."
+}
+
+$OutputDirectory = Split-Path -Parent $OutputPath
+if (-not (Test-Path -LiteralPath $OutputDirectory)) {
+    New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
 }
 
 if (Test-Path -LiteralPath $OutputPath) {

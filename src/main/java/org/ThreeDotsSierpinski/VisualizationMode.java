@@ -96,10 +96,10 @@ public interface VisualizationMode {
                 new BarnsleyFernMode(),
                 new RandomWalkHeatmapMode(),
                 new GaltonBoardMode(),
+                new PercolationMode(),
                 // Добавьте новые режимы здесь:
-                // new PercolationMode(),
                 // new BlueNoiseMode(),
-                // new VoronoiMode(),
+                // new TerrainMode(),
         };
     }
 }

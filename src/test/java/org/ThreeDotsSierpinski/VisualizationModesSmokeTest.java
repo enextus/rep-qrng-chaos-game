@@ -12,7 +12,6 @@ import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 @DisplayName("Visualization modes smoke tests")
 @Tag("fast")
@@ -75,7 +74,7 @@ class VisualizationModesSmokeTest {
     @DisplayName("VoronoiMode exposes marker controls and refreshes on toggle")
     void voronoiMarkerToggleRefreshesController() {
         VoronoiMode mode = new VoronoiMode();
-        DotController controller = mock(DotController.class);
+        CountingDotController controller = new CountingDotController();
 
         List<JComponent> controls = mode.createModeControls(controller);
 
@@ -88,7 +87,8 @@ class VisualizationModesSmokeTest {
 
         toggle.doClick();
 
-        verify(controller).refreshVisualization();
+        assertEquals(1, controller.refreshCount());
+        controller.shutdown();
     }
 
     @Test
@@ -125,8 +125,7 @@ class VisualizationModesSmokeTest {
     @Test
     @DisplayName("Modes handle temporarily empty provider without crashing")
     void modesHandleEmptyProviderWithoutCrashing() {
-        RNProvider emptyProvider = mock(RNProvider.class);
-        when(emptyProvider.getNextRandomNumber()).thenReturn(OptionalInt.empty());
+        RNProvider emptyProvider = emptyProvider();
 
         List<VisualizationMode> modes = List.of(
                 new BarnsleyFernMode(),
@@ -148,9 +147,63 @@ class VisualizationModesSmokeTest {
     }
 
     private static RNProvider sequentialProvider() {
-        RNProvider provider = mock(RNProvider.class);
         AtomicInteger value = new AtomicInteger();
-        when(provider.getNextRandomNumber()).thenAnswer(_ -> OptionalInt.of(value.getAndIncrement()));
-        return provider;
+        return new TestRNProvider(() -> OptionalInt.of(value.getAndIncrement()));
+    }
+
+    private static RNProvider emptyProvider() {
+        return new TestRNProvider(OptionalInt::empty);
+    }
+
+    private interface NumberSupplier {
+        OptionalInt next();
+    }
+
+    private static final class TestRNProvider extends RNProvider {
+        private final NumberSupplier numberSupplier;
+
+        private TestRNProvider(NumberSupplier numberSupplier) {
+            super(testSettings(), false, _ -> { });
+            this.numberSupplier = numberSupplier;
+        }
+
+        @Override
+        public OptionalInt getNextRandomNumber() {
+            return numberSupplier.next();
+        }
+    }
+
+    private static final class CountingDotController extends DotController {
+        private int refreshCount = 0;
+
+        private CountingDotController() {
+            super(emptyProvider(), new VoronoiMode(), new JLabel());
+        }
+
+        @Override
+        public void refreshVisualization() {
+            refreshCount++;
+        }
+
+        private int refreshCount() {
+            return refreshCount;
+        }
+    }
+
+    private static RNProvider.ProviderSettings testSettings() {
+        return new RNProvider.ProviderSettings(
+                "http://localhost/test",
+                "test-api-key",
+                "uint16",
+                16,
+                2,
+                1,
+                10,
+                10,
+                1,
+                0,
+                0L,
+                0L
+        );
     }
 }

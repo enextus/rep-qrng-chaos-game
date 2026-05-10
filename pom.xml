@@ -121,9 +121,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.5</version>
                 <configuration>
-                    <!-- @{argLine} — подставляет JaCoCo agent, затем наши флаги -->
-                    <argLine>@{argLine} -XX:+EnableDynamicAgentLoading</argLine>
-                    <argLine>-Dfile.encoding=UTF-8</argLine>
+                    <!-- @{argLine} — подставляет JaCoCo agent, затем JVM-флаги тестового процесса -->
+                    <argLine>@{argLine} -XX:+EnableDynamicAgentLoading -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8</argLine>
                     <parallel>classes</parallel>
                     <threadCount>4</threadCount>
                     <includes>

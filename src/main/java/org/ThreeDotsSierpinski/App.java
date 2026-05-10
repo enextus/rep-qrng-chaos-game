@@ -1,6 +1,7 @@
 package org.ThreeDotsSierpinski;
 
 import com.formdev.flatlaf.FlatLightLaf;
+import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
 import java.awt.*;
@@ -543,6 +544,11 @@ public class App {
     }
 
     private static Rectangle getUsableScreenBounds(GraphicsConfiguration graphicsConfiguration) {
+        return getRectangle(graphicsConfiguration);
+    }
+
+    @NotNull
+    static Rectangle getRectangle(GraphicsConfiguration graphicsConfiguration) {
         Rectangle bounds = graphicsConfiguration.getBounds();
         Insets insets = Toolkit.getDefaultToolkit().getScreenInsets(graphicsConfiguration);
 

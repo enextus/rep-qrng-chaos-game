@@ -35,10 +35,15 @@ public class DLAMode implements VisualizationMode {
     private static final double INITIAL_MAX_DISTANCE = 1.0;
     private static final int INITIAL_SPAWN_RADIUS = 30;
 
-    private static final int PARALLEL_WALKERS = 40;
-    private static final int MAX_STEPS_PER_TICK = 5_000;
-    private static final int MAX_STICKS_PER_TICK = 20;
-    private static final int WALKER_LIFESPAN = 5_000;
+    /**
+     * More walkers + more steps per tick makes the tree grow much faster.
+     * The algorithm is still bounded by MAX_STICKS_PER_TICK, so EDT repaint
+     * remains controlled while the simulation searches more aggressively.
+     */
+    private static final int PARALLEL_WALKERS = 160;
+    private static final int MAX_STEPS_PER_TICK = 20_000;
+    private static final int MAX_STICKS_PER_TICK = 80;
+    private static final int WALKER_LIFESPAN = 3_000;
 
     private static final int FULL_CIRCLE_DEGREES = 360;
 
@@ -46,7 +51,11 @@ public class DLAMode implements VisualizationMode {
     private static final int OUTER_BORDER_EXCLUSIVE_OFFSET = 1;
     private static final int INNER_BORDER_MAX_OFFSET = 2;
 
-    private static final double SPAWN_RADIUS_TELEPORT_MULTIPLIER = 2.0;
+    /**
+     * A slightly tighter teleport radius keeps walkers close to the active
+     * growth front and reduces wasted random-walk steps far away from cluster.
+     */
+    private static final double SPAWN_RADIUS_TELEPORT_MULTIPLIER = 1.75;
     private static final double SPAWN_RADIUS_EXPANSION_TRIGGER_PADDING = 20.0;
     private static final int SPAWN_RADIUS_EXPANSION_PADDING = 30;
     private static final int SPAWN_RADIUS_MAX_MARGIN = 10;
@@ -65,18 +74,41 @@ public class DLAMode implements VisualizationMode {
     private static final double SIZE_SCALE_DROP = 2.0;
     private static final int MIN_DOT_SIZE = 2;
 
-    private static final int NEIGHBOR_OFFSET_MIN = -1;
-    private static final int NEIGHBOR_OFFSET_MAX = 1;
-    private static final int SELF_OFFSET = 0;
+    private static final double HALO_SCALE = 1.85;
+    private static final int HALO_EXTRA_SIZE = 4;
+    private static final int HALO_ALPHA = 70;
 
+    /**
+     * 8-neighbour movement gives a more isotropic DLA tree than a 4-direction
+     * walk and helps the visual structure expand faster in all directions.
+     */
     private static final int[][] WALK_DIRS = {
             {0, -1},
+            {1, -1},
+            {1, 0},
+            {1, 1},
             {0, 1},
+            {-1, 1},
             {-1, 0},
-            {1, 0}
+            {-1, -1}
     };
 
-    private boolean[][] grid;
+    private static final double[] ANGLE_COS = new double[FULL_CIRCLE_DEGREES];
+    private static final double[] ANGLE_SIN = new double[FULL_CIRCLE_DEGREES];
+
+    static {
+        for (int angle = 0; angle < FULL_CIRCLE_DEGREES; angle++) {
+            double radians = Math.toRadians(angle);
+            ANGLE_COS[angle] = Math.cos(radians);
+            ANGLE_SIN[angle] = Math.sin(radians);
+        }
+    }
+
+    /**
+     * Flat grid is faster and more cache-friendly than boolean[width][height],
+     * which creates many nested arrays and adds one extra indirection per cell.
+     */
+    private boolean[] grid;
     private int width;
     private int height;
     private int pointCount = INITIAL_POINT_COUNT;
@@ -86,6 +118,7 @@ public class DLAMode implements VisualizationMode {
     private int centerX;
     private int centerY;
     private double maxDist = INITIAL_MAX_DISTANCE;
+    private double maxDistSquared = INITIAL_MAX_DISTANCE * INITIAL_MAX_DISTANCE;
 
     private int spawnRadius = INITIAL_SPAWN_RADIUS;
 
@@ -128,144 +161,167 @@ public class DLAMode implements VisualizationMode {
     public void initialize(BufferedImage canvas, int width, int height) {
         this.width = width;
         this.height = height;
-        this.grid = new boolean[width][height];
+        this.grid = new boolean[width * height];
         this.pointCount = INITIAL_POINT_COUNT;
         this.randomNumbersUsed = INITIAL_RANDOM_NUMBERS_USED;
         this.centerX = width / CENTER_DIVISOR;
         this.centerY = height / CENTER_DIVISOR;
         this.maxDist = INITIAL_MAX_DISTANCE;
+        this.maxDistSquared = INITIAL_MAX_DISTANCE * INITIAL_MAX_DISTANCE;
         this.spawnRadius = INITIAL_SPAWN_RADIUS;
 
         var g2d = canvas.createGraphics();
-        g2d.setColor(Color.BLACK);
-        g2d.fillRect(0, 0, width, height);
 
-        grid[centerX][centerY] = true;
-        pointCount = 1;
+        try {
+            g2d.setColor(Color.BLACK);
+            g2d.fillRect(0, 0, width, height);
 
-        g2d.setRenderingHint(
-                RenderingHints.KEY_ANTIALIASING,
-                RenderingHints.VALUE_ANTIALIAS_ON
-        );
+            setOccupied(centerX, centerY);
+            pointCount = 1;
 
-        int seedSize = getSizeForDepth(SEED_DEPTH);
-        g2d.setColor(getColorForDepth(SEED_DEPTH));
-        g2d.fillOval(
-                centerX - seedSize / CENTER_DIVISOR,
-                centerY - seedSize / CENTER_DIVISOR,
-                seedSize,
-                seedSize
-        );
+            g2d.setRenderingHint(
+                    RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON
+            );
 
-        g2d.dispose();
+            drawStuckParticle(g2d, centerX, centerY, SEED_DEPTH);
+        } finally {
+            g2d.dispose();
+        }
 
         Arrays.fill(walkerAlive, false);
     }
 
     @Override
     public List<Point> step(RNProvider provider, BufferedImage canvas, int dotSize) {
-        this.baseDotSize = dotSize;
-        var newPoints = new ArrayList<Point>();
+        this.baseDotSize = Math.max(MIN_DOT_SIZE, dotSize);
+        var newPoints = new ArrayList<Point>(MAX_STICKS_PER_TICK);
 
         var g2d = canvas.createGraphics();
-        g2d.setRenderingHint(
-                RenderingHints.KEY_ANTIALIASING,
-                RenderingHints.VALUE_ANTIALIAS_ON
-        );
 
-        int sticksThisTick = 0;
-        int stepsLeft = MAX_STEPS_PER_TICK;
+        try {
+            g2d.setRenderingHint(
+                    RenderingHints.KEY_ANTIALIASING,
+                    RenderingHints.VALUE_ANTIALIAS_ON
+            );
 
-        while (stepsLeft > 0 && sticksThisTick < MAX_STICKS_PER_TICK) {
-            boolean bufferEmpty = false;
+            int sticksThisTick = 0;
+            int stepsLeft = MAX_STEPS_PER_TICK;
 
-            for (int i = 0; i < PARALLEL_WALKERS && stepsLeft > 0; i++) {
-                if (!walkerAlive[i]) {
-                    if (!spawnWalker(provider, i)) {
+            while (stepsLeft > 0 && sticksThisTick < MAX_STICKS_PER_TICK) {
+                boolean bufferEmpty = false;
+
+                for (int i = 0; i < PARALLEL_WALKERS && stepsLeft > 0; i++) {
+                    if (!walkerAlive[i]) {
+                        if (!spawnWalker(provider, i)) {
+                            bufferEmpty = true;
+                            break;
+                        }
+                    }
+
+                    OptionalInt dirOpt = provider.getNextRandomNumber();
+                    if (dirOpt.isEmpty()) {
                         bufferEmpty = true;
                         break;
                     }
+
+                    int dir = Math.floorMod(dirOpt.getAsInt(), WALK_DIRS.length);
+                    randomNumbersUsed++;
+                    stepsLeft--;
+
+                    walkerX[i] += WALK_DIRS[dir][0];
+                    walkerY[i] += WALK_DIRS[dir][1];
+                    walkerAge[i]++;
+
+                    if (isOutsideCanvasBorder(walkerX[i], walkerY[i])) {
+                        walkerAlive[i] = false;
+                        continue;
+                    }
+
+                    if (walkerAge[i] > WALKER_LIFESPAN) {
+                        walkerAlive[i] = false;
+                        continue;
+                    }
+
+                    int dx = walkerX[i] - centerX;
+                    int dy = walkerY[i] - centerY;
+                    double distSquared = (double) (dx * dx + dy * dy);
+
+                    double maxAllowedDist = spawnRadius * SPAWN_RADIUS_TELEPORT_MULTIPLIER;
+                    if (distSquared > maxAllowedDist * maxAllowedDist) {
+                        teleportWalkerToBorder(provider, i);
+                        continue;
+                    }
+
+                    if (touchesCluster(walkerX[i], walkerY[i])) {
+                        stickWalker(g2d, newPoints, i, distSquared);
+                        sticksThisTick++;
+
+                        if (sticksThisTick >= MAX_STICKS_PER_TICK) {
+                            break;
+                        }
+                    }
                 }
 
-                OptionalInt dirOpt = provider.getNextRandomNumber();
-                if (dirOpt.isEmpty()) {
-                    bufferEmpty = true;
+                if (bufferEmpty) {
                     break;
                 }
-
-                int dir = Math.abs(dirOpt.getAsInt()) % WALK_DIRS.length;
-                randomNumbersUsed++;
-                stepsLeft--;
-
-                walkerX[i] += WALK_DIRS[dir][0];
-                walkerY[i] += WALK_DIRS[dir][1];
-                walkerAge[i]++;
-
-                if (isOutsideCanvasBorder(walkerX[i], walkerY[i])) {
-                    walkerAlive[i] = false;
-                    continue;
-                }
-
-                if (walkerAge[i] > WALKER_LIFESPAN) {
-                    walkerAlive[i] = false;
-                    continue;
-                }
-
-                int dx = walkerX[i] - centerX;
-                int dy = walkerY[i] - centerY;
-                double distSquared = (double) (dx * dx + dy * dy);
-
-                double maxAllowedDist = spawnRadius * SPAWN_RADIUS_TELEPORT_MULTIPLIER;
-                if (distSquared > maxAllowedDist * maxAllowedDist) {
-                    teleportWalkerToBorder(provider, i);
-                    continue;
-                }
-
-                if (touchesCluster(walkerX[i], walkerY[i])) {
-                    grid[walkerX[i]][walkerY[i]] = true;
-                    pointCount++;
-                    walkerAlive[i] = false;
-
-                    if (distSquared > maxDist * maxDist) {
-                        maxDist = Math.sqrt(distSquared);
-                    }
-
-                    double dist = Math.sqrt(distSquared);
-                    if (dist + SPAWN_RADIUS_EXPANSION_TRIGGER_PADDING > spawnRadius) {
-                        spawnRadius = Math.min(
-                                (int) dist + SPAWN_RADIUS_EXPANSION_PADDING,
-                                Math.min(width, height) / CENTER_DIVISOR - SPAWN_RADIUS_MAX_MARGIN
-                        );
-                    }
-
-                    double t = maxDist == 0 ? MIN_DEPTH : dist / maxDist;
-                    int size = getSizeForDepth(t);
-                    Color color = getColorForDepth(t);
-
-                    g2d.setColor(color);
-                    g2d.fillOval(
-                            walkerX[i] - size / CENTER_DIVISOR,
-                            walkerY[i] - size / CENTER_DIVISOR,
-                            size,
-                            size
-                    );
-
-                    newPoints.add(new Point(walkerX[i], walkerY[i]));
-                    sticksThisTick++;
-
-                    if (sticksThisTick >= MAX_STICKS_PER_TICK) {
-                        break;
-                    }
-                }
             }
-
-            if (bufferEmpty) {
-                break;
-            }
+        } finally {
+            g2d.dispose();
         }
 
-        g2d.dispose();
         return newPoints;
+    }
+
+    private void stickWalker(Graphics2D g2d, List<Point> newPoints, int index, double distSquared) {
+        int x = walkerX[index];
+        int y = walkerY[index];
+
+        setOccupied(x, y);
+        pointCount++;
+        walkerAlive[index] = false;
+
+        double dist = Math.sqrt(distSquared);
+        if (distSquared > maxDistSquared) {
+            maxDistSquared = distSquared;
+            maxDist = dist;
+        }
+
+        if (dist + SPAWN_RADIUS_EXPANSION_TRIGGER_PADDING > spawnRadius) {
+            spawnRadius = Math.min(
+                    (int) dist + SPAWN_RADIUS_EXPANSION_PADDING,
+                    Math.min(width, height) / CENTER_DIVISOR - SPAWN_RADIUS_MAX_MARGIN
+            );
+        }
+
+        double t = maxDist == 0 ? MIN_DEPTH : dist / maxDist;
+        drawStuckParticle(g2d, x, y, t);
+        newPoints.add(new Point(x, y));
+    }
+
+    private void drawStuckParticle(Graphics2D g2d, int x, int y, double depth) {
+        int size = getSizeForDepth(depth);
+        Color color = getColorForDepth(depth);
+
+        int haloSize = Math.max(size + HALO_EXTRA_SIZE, (int) Math.round(size * HALO_SCALE));
+        Color haloColor = new Color(color.getRed(), color.getGreen(), color.getBlue(), HALO_ALPHA);
+
+        g2d.setColor(haloColor);
+        g2d.fillOval(
+                x - haloSize / CENTER_DIVISOR,
+                y - haloSize / CENTER_DIVISOR,
+                haloSize,
+                haloSize
+        );
+
+        g2d.setColor(color);
+        g2d.fillOval(
+                x - size / CENTER_DIVISOR,
+                y - size / CENTER_DIVISOR,
+                size,
+                size
+        );
     }
 
     private Color getColorForDepth(double t) {
@@ -293,7 +349,7 @@ public class DLAMode implements VisualizationMode {
             return false;
         }
 
-        int angle = Math.abs(angleOpt.getAsInt()) % FULL_CIRCLE_DEGREES;
+        int angle = Math.floorMod(angleOpt.getAsInt(), FULL_CIRCLE_DEGREES);
         randomNumbersUsed++;
 
         placeWalkerOnSpawnBorder(index, angle);
@@ -311,7 +367,7 @@ public class DLAMode implements VisualizationMode {
             return;
         }
 
-        int angle = Math.abs(angleOpt.getAsInt()) % FULL_CIRCLE_DEGREES;
+        int angle = Math.floorMod(angleOpt.getAsInt(), FULL_CIRCLE_DEGREES);
         randomNumbersUsed++;
 
         placeWalkerOnSpawnBorder(index, angle);
@@ -321,10 +377,8 @@ public class DLAMode implements VisualizationMode {
     }
 
     private void placeWalkerOnSpawnBorder(int index, int angle) {
-        double rad = Math.toRadians(angle);
-
-        walkerX[index] = centerX + (int) (spawnRadius * Math.cos(rad));
-        walkerY[index] = centerY + (int) (spawnRadius * Math.sin(rad));
+        walkerX[index] = centerX + (int) (spawnRadius * ANGLE_COS[angle]);
+        walkerY[index] = centerY + (int) (spawnRadius * ANGLE_SIN[angle]);
 
         walkerX[index] = Math.clamp(
                 walkerX[index],
@@ -347,33 +401,30 @@ public class DLAMode implements VisualizationMode {
     }
 
     private boolean touchesCluster(int x, int y) {
-        for (int dx = NEIGHBOR_OFFSET_MIN; dx <= NEIGHBOR_OFFSET_MAX; dx++) {
-            for (int dy = NEIGHBOR_OFFSET_MIN; dy <= NEIGHBOR_OFFSET_MAX; dy++) {
-                if (dx == SELF_OFFSET && dy == SELF_OFFSET) {
-                    continue;
-                }
-
-                int nx = x + dx;
-                int ny = y + dy;
-
-                if (isInsideGrid(nx, ny) && grid[nx][ny]) {
-                    return true;
-                }
-            }
+        if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) {
+            return false;
         }
 
-        return false;
+        int row = y * width;
+        int above = row - width;
+        int below = row + width;
+
+        return grid[above + x - 1]
+                || grid[above + x]
+                || grid[above + x + 1]
+                || grid[row + x - 1]
+                || grid[row + x + 1]
+                || grid[below + x - 1]
+                || grid[below + x]
+                || grid[below + x + 1];
     }
 
-    private boolean isInsideGrid(int x, int y) {
-        return x >= 0 && x < width && y >= 0 && y < height;
+    private void setOccupied(int x, int y) {
+        grid[toIndex(x, y)] = true;
     }
 
-    private static double distance(int x1, int y1, int x2, int y2) {
-        double dx = x1 - x2;
-        double dy = y1 - y2;
-
-        return Math.sqrt(dx * dx + dy * dy);
+    private int toIndex(int x, int y) {
+        return y * width + x;
     }
 
     @Override

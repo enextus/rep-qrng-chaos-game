@@ -219,8 +219,8 @@ public class ModeSelectionDialog {
         return new Rectangle(
                 bounds.x + insets.left,
                 bounds.y + insets.top,
-                bounds.width - insets.left - insets.right,
-                bounds.height - insets.top - insets.bottom
+                Math.max(1, bounds.width - insets.left - insets.right),
+                Math.max(1, bounds.height - insets.top - insets.bottom)
         );
     }
 

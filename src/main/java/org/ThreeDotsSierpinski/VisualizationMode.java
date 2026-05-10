@@ -91,15 +91,12 @@ public interface VisualizationMode {
     static VisualizationMode[] allModes() {
         return new VisualizationMode[] {
                 new SierpinskiMode(),
-                new DLAMode(),
                 new VoronoiMode(),
-                new BarnsleyFernMode(),
                 new RandomWalkHeatmapMode(),
                 new GaltonBoardMode(),
                 new PercolationMode(),
-                // Добавьте новые режимы здесь:
-                // new BlueNoiseMode(),
-                // new TerrainMode(),
+                new BarnsleyFernMode(),
+                new DLAMode(),
         };
     }
 }

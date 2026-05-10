@@ -5,13 +5,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = if ($PSScriptRoot) {
+$ScriptDir = if ($PSScriptRoot) {
     $PSScriptRoot
 } else {
     Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).ProviderPath
+$ScriptDir = (Resolve-Path -LiteralPath $ScriptDir).ProviderPath
+$ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")).ProviderPath
 Set-Location -LiteralPath $ProjectRoot
 
 $Timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
@@ -32,15 +33,9 @@ $CandidatePaths = @(
     ".env.example",
     ".gitignore",
     "src",
-    "make-chatgpt-context-zip.ps1",
-    "make-chatgpt-context-zip.cmd",
-    "make-chatgpt-context-zip.sh"
+    "scripts"
 )
 
-# Windows paths are case-insensitive. If the project contains Readme.md,
-# then Test-Path also returns true for README.md. Passing both spellings to
-# Compress-Archive causes DuplicatePathFound. Resolve each path and keep only
-# one canonical full path.
 $SeenPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 $ExistingPaths = New-Object 'System.Collections.Generic.List[string]'
 
@@ -51,7 +46,6 @@ foreach ($CandidatePath in $CandidatePaths) {
 
     $ResolvedPath = (Resolve-Path -LiteralPath $CandidatePath).ProviderPath
 
-    # Do not accidentally add the output archive itself if a custom path matches.
     if ([string]::Equals($ResolvedPath, $OutputPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         continue
     }
@@ -62,7 +56,7 @@ foreach ($CandidatePath in $CandidatePaths) {
 }
 
 if ($ExistingPaths.Count -eq 0) {
-    throw "No context files found. Run this script from the project root."
+    throw "No context files found. Run this script from the project root or from the scripts directory."
 }
 
 $OutputDirectory = Split-Path -Parent $OutputPath

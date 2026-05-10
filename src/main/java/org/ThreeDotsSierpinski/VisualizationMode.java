@@ -93,6 +93,7 @@ public interface VisualizationMode {
                 new SierpinskiMode(),
                 new DLAMode(),
                 new VoronoiMode(),
+                new BarnsleyFernMode(),
                 // Добавьте новые режимы здесь:
                 // new PercolationMode(),
                 // new BlueNoiseMode(),

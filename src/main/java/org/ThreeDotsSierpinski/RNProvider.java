@@ -504,7 +504,7 @@ public class RNProvider {
         currentMode = Mode.QUANTUM;
         pseudoBatchCount = 0;
         LOGGER.info("Switched back to QUANTUM mode (ANU API).");
-        notifyModeChanged(RNProvider.Mode.QUANTUM);
+        notifyModeChanged(Mode.QUANTUM);
     }
 
     // ========================================================================

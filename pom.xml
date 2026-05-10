@@ -12,6 +12,7 @@
         <maven.compiler.source>25</maven.compiler.source>
         <maven.compiler.target>25</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <junit-jupiter.version>5.13.4</junit-jupiter.version>
         <mockito.version>5.23.0</mockito.version>
@@ -122,6 +123,7 @@
                 <configuration>
                     <!-- @{argLine} — подставляет JaCoCo agent, затем наши флаги -->
                     <argLine>@{argLine} -XX:+EnableDynamicAgentLoading</argLine>
+                    <argLine>-Dfile.encoding=UTF-8</argLine>
                     <parallel>classes</parallel>
                     <threadCount>4</threadCount>
                     <includes>

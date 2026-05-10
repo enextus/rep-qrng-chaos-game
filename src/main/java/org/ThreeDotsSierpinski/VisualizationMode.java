@@ -94,6 +94,7 @@ public interface VisualizationMode {
                 new DLAMode(),
                 new VoronoiMode(),
                 new BarnsleyFernMode(),
+                new RandomWalkHeatmapMode(),
                 // Добавьте новые режимы здесь:
                 // new PercolationMode(),
                 // new BlueNoiseMode(),

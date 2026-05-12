@@ -10,10 +10,17 @@ import java.util.OptionalInt;
 /**
  * Режим визуализации: Diffusion-Limited Aggregation (DLA) / Brownian Tree.
  * Частицы блуждают случайно и прилипают к растущему кластеру.
- * Визуализация «Using spheres of decreasing radius» (Paul Bourke).
- * Цвет: HSB-градиент от центра (красный/тёплый) к краям (голубой/холодный).
- * Размер: убывает с расстоянием от центра.
- * Фон: чёрный.
+ *
+ * Улучшения по сравнению с базовой версией:
+ *  - Birth/Kill circles: walker умирает при выходе за kill-радиус (правильная DLA),
+ *    spawn-радиус ограничен реальным расстоянием от центра до края canvas, что
+ *    устраняет артефакт «дуги вдоль границы».
+ *  - Sticking probability < 1.0: даёт более плотные, кораллообразные структуры
+ *    вместо костлявых нитей.
+ *  - Цвет считается от времени рождения частицы (порядкового номера), а не от
+ *    расстояния — получается эффект «годовых колец».
+ *  - Палитра в стиле inferno (фиолет → пурпур → оранж → жёлтый) вместо HSB-радуги.
+ *  - Трёхслойный glow + высветленное ядро дают объёмное светящееся свечение.
  *
  * @see <a href="https://paulbourke.net/fractals/dla/">Paul Bourke: DLA</a>
  */
@@ -26,71 +33,110 @@ public class DLAMode implements VisualizationMode {
                     + "Кораллы, молнии, кристаллы — из чистой случайности.";
     private static final String ICON = "⚡";
 
+    // ---- базовые параметры ---------------------------------------------------
+
     private static final int INITIAL_POINT_COUNT = 0;
     private static final int INITIAL_RANDOM_NUMBERS_USED = 0;
     private static final int DEFAULT_BASE_DOT_SIZE = 5;
-
     private static final int CENTER_DIVISOR = 2;
 
     private static final double INITIAL_MAX_DISTANCE = 1.0;
     private static final int INITIAL_SPAWN_RADIUS = 30;
 
-    /**
-     * More walkers + more steps per tick makes the tree grow much faster.
-     * The algorithm is still bounded by MAX_STICKS_PER_TICK, so EDT repaint
-     * remains controlled while the simulation searches more aggressively.
-     */
     private static final int PARALLEL_WALKERS = 160;
-    private static final int MAX_STEPS_PER_TICK = 20_000;
+    private static final int MAX_STEPS_PER_TICK = 30_000;
     private static final int MAX_STICKS_PER_TICK = 80;
     private static final int WALKER_LIFESPAN = 3_000;
 
     private static final int FULL_CIRCLE_DEGREES = 360;
-
     private static final int MIN_WALKER_COORDINATE = 1;
     private static final int OUTER_BORDER_EXCLUSIVE_OFFSET = 1;
     private static final int INNER_BORDER_MAX_OFFSET = 2;
 
+    // ---- birth/kill circles --------------------------------------------------
+
+    /** Узкая полоса вокруг фронта кластера, в которой рождаются walker'ы. */
+    private static final int BIRTH_BUFFER = 15;
+
     /**
-     * A slightly tighter teleport radius keeps walkers close to the active
-     * growth front and reduces wasted random-walk steps far away from cluster.
+     * Если walker уходит дальше KILL_RADIUS_MULT × spawnRadius — он умирает
+     * (а не телепортируется обратно, как было раньше). Это правильная
+     * каноническая DLA: walker рождается в одном кольце, погибает в другом.
      */
-    private static final double SPAWN_RADIUS_TELEPORT_MULTIPLIER = 1.75;
-    private static final double SPAWN_RADIUS_EXPANSION_TRIGGER_PADDING = 20.0;
-    private static final int SPAWN_RADIUS_EXPANSION_PADDING = 30;
-    private static final int SPAWN_RADIUS_MAX_MARGIN = 10;
+    private static final double KILL_RADIUS_MULT = 2.0;
 
-    private static final double MIN_DEPTH = 0.0;
-    private static final double MAX_DEPTH = 1.0;
-    private static final double SEED_DEPTH = 0.0;
+    /** Запас от края canvas: spawn-круг гарантированно влезает целиком. */
+    private static final int SPAWN_RADIUS_MARGIN = 20;
 
-    private static final double HUE_MAX = 0.5;
-    private static final double SATURATION_BASE = 0.85;
-    private static final double SATURATION_EXTRA = 0.15;
-    private static final double BRIGHTNESS_BASE = 0.95;
-    private static final double BRIGHTNESS_DROP = 0.25;
+    // ---- стиль роста ---------------------------------------------------------
 
-    private static final double SIZE_SCALE_CENTER = 2.5;
-    private static final double SIZE_SCALE_DROP = 2.0;
+    /**
+     * Вероятность прилипания при касании кластера.
+     *   1.0  → классический «костлявый» DLA-фрактал
+     *   0.5  → ветвистый, но всё ещё разреженный
+     *   0.35 → пышная коралловая структура (default)
+     *   0.1  → почти плотный Eden-кластер
+     */
+    private static final double STICKING_PROBABILITY = 0.35;
+
+    // ---- цвет ----------------------------------------------------------------
+
+    /**
+     * Шкала «полупути»: при pointCount == COLOR_TIME_SCALE цвет находится
+     * ровно на середине палитры (t = 0.5). Используется логистическая формула
+     * t = n / (k + n), которая ассимптотически стремится к 1.0 — это даёт
+     * хорошую цветовую динамику и для маленьких кластеров (5k точек), и для
+     * больших (50k+), без застревания в одном сегменте палитры.
+     *
+     * Чем меньше значение — тем быстрее цвета прогрессируют к фронту палитры.
+     *   3_000  → яркий жёлтый фронт уже при 10k точек
+     *   8_000  → сбалансировано (default)
+     *   20_000 → медленная прогрессия, долгий «тёмный» период
+     */
+    private static final double COLOR_TIME_SCALE = 8_000.0;
+
+    /** Дополнительный вклад радиальной позиции в цвет: 0.0 = чисто по времени, 1.0 = чисто по радиусу. */
+    private static final double COLOR_RADIAL_WEIGHT = 0.4;
+
+    /**
+     * Палитра в стиле inferno: тёмно-фиолетовый старт → пурпур → малиновый →
+     * оранжевый → янтарный → светло-жёлтый фронт. Цвет частицы определяется её
+     * порядковым номером рождения, поэтому центр кластера будет одного цвета,
+     * а растущий фронт — другого. Эффект «годовых колец».
+     */
+    private static final Color[] PALETTE = {
+            new Color( 20,  10,  60),
+            new Color( 90,  20, 110),
+            new Color(180,  40, 110),
+            new Color(230,  90,  60),
+            new Color(255, 180,  60),
+            new Color(255, 240, 180)
+    };
+
+    // ---- glow / свечение -----------------------------------------------------
+
+    /** Размер каждого halo-слоя как множитель от базового размера точки. */
+    private static final double[] HALO_SCALES = {3.6, 2.3, 1.5};
+
+    /** Прозрачность каждого halo-слоя (внешний → внутренний). */
+    private static final int[] HALO_ALPHAS = {18, 45, 95};
+
+    /** На сколько высветлять ядро относительно базового цвета (additive feel). */
+    private static final int CORE_BRIGHTEN = 50;
+
+    // ---- размер точки --------------------------------------------------------
+
     private static final int MIN_DOT_SIZE = 2;
+    /** Базовый множитель: даже самые старые точки не меньше этого × baseDotSize. */
+    private static final double SIZE_SCALE_BASE = 1.0;
+    /** Дополнительный рост для свежих точек на фронте кластера. */
+    private static final double SIZE_SCALE_GROWTH = 0.6;
 
-    private static final double HALO_SCALE = 1.85;
-    private static final int HALO_EXTRA_SIZE = 4;
-    private static final int HALO_ALPHA = 70;
+    // ---- 8-связное случайное блуждание --------------------------------------
 
-    /**
-     * 8-neighbour movement gives a more isotropic DLA tree than a 4-direction
-     * walk and helps the visual structure expand faster in all directions.
-     */
     private static final int[][] WALK_DIRS = {
-            {0, -1},
-            {1, -1},
-            {1, 0},
-            {1, 1},
-            {0, 1},
-            {-1, 1},
-            {-1, 0},
-            {-1, -1}
+            {0, -1}, {1, -1}, {1, 0}, {1, 1},
+            {0, 1},  {-1, 1}, {-1, 0}, {-1, -1}
     };
 
     private static final double[] ANGLE_COS = new double[FULL_CIRCLE_DEGREES];
@@ -104,10 +150,8 @@ public class DLAMode implements VisualizationMode {
         }
     }
 
-    /**
-     * Flat grid is faster and more cache-friendly than boolean[width][height],
-     * which creates many nested arrays and adds one extra indirection per cell.
-     */
+    // ---- состояние -----------------------------------------------------------
+
     private boolean[] grid;
     private int width;
     private int height;
@@ -117,6 +161,8 @@ public class DLAMode implements VisualizationMode {
 
     private int centerX;
     private int centerY;
+    /** Аккуратный кэп spawn-радиуса — гарантирует, что круг влезает в canvas. */
+    private int maxRadiusCap;
     private double maxDist = INITIAL_MAX_DISTANCE;
     private double maxDistSquared = INITIAL_MAX_DISTANCE * INITIAL_MAX_DISTANCE;
 
@@ -127,35 +173,18 @@ public class DLAMode implements VisualizationMode {
     private final int[] walkerAge = new int[PARALLEL_WALKERS];
     private final boolean[] walkerAlive = new boolean[PARALLEL_WALKERS];
 
-    @Override
-    public String getId() {
-        return ID;
-    }
+    // ==== интерфейсные методы ================================================
 
-    @Override
-    public String getName() {
-        return NAME;
-    }
+    @Override public String getId()          { return ID; }
+    @Override public String getName()        { return NAME; }
+    @Override public String getDescription() { return DESCRIPTION; }
+    @Override public String getIcon()        { return ICON; }
+    @Override public boolean usesRecolorAnimation() { return false; }
+    @Override public boolean usesDarkBackground()    { return true; }
+    @Override public int getPointCount()             { return pointCount; }
+    @Override public int getRandomNumbersUsed()      { return randomNumbersUsed; }
 
-    @Override
-    public String getDescription() {
-        return DESCRIPTION;
-    }
-
-    @Override
-    public String getIcon() {
-        return ICON;
-    }
-
-    @Override
-    public boolean usesRecolorAnimation() {
-        return false;
-    }
-
-    @Override
-    public boolean usesDarkBackground() {
-        return true;
-    }
+    // ==== основной цикл =======================================================
 
     @Override
     public void initialize(BufferedImage canvas, int width, int height) {
@@ -170,8 +199,20 @@ public class DLAMode implements VisualizationMode {
         this.maxDistSquared = INITIAL_MAX_DISTANCE * INITIAL_MAX_DISTANCE;
         this.spawnRadius = INITIAL_SPAWN_RADIUS;
 
-        var g2d = canvas.createGraphics();
+        // Правильный кэп: spawn-круг радиуса maxRadiusCap гарантированно
+        // помещается в canvas со всех сторон (для любого aspect ratio).
+        // Это устраняет артефакт «вертикальной дуги», который возникал из-за
+        // того, что spawn-круг вылезал за границы и Math.clamp сплющивал
+        // walker'ов в линию вдоль края.
+        this.maxRadiusCap = Math.min(
+                Math.min(centerX, width  - centerX),
+                Math.min(centerY, height - centerY)
+        ) - SPAWN_RADIUS_MARGIN;
+        if (this.maxRadiusCap < INITIAL_SPAWN_RADIUS) {
+            this.maxRadiusCap = INITIAL_SPAWN_RADIUS;
+        }
 
+        Graphics2D g2d = canvas.createGraphics();
         try {
             g2d.setColor(Color.BLACK);
             g2d.fillRect(0, 0, width, height);
@@ -184,7 +225,8 @@ public class DLAMode implements VisualizationMode {
                     RenderingHints.VALUE_ANTIALIAS_ON
             );
 
-            drawStuckParticle(g2d, centerX, centerY, SEED_DEPTH);
+            // Seed — самый старый цвет в палитре.
+            drawParticle(g2d, centerX, centerY, 0.0);
         } finally {
             g2d.dispose();
         }
@@ -197,8 +239,7 @@ public class DLAMode implements VisualizationMode {
         this.baseDotSize = Math.max(MIN_DOT_SIZE, dotSize);
         var newPoints = new ArrayList<Point>(MAX_STICKS_PER_TICK);
 
-        var g2d = canvas.createGraphics();
-
+        Graphics2D g2d = canvas.createGraphics();
         try {
             g2d.setRenderingHint(
                     RenderingHints.KEY_ANTIALIASING,
@@ -247,19 +288,33 @@ public class DLAMode implements VisualizationMode {
                     int dy = walkerY[i] - centerY;
                     double distSquared = (double) (dx * dx + dy * dy);
 
-                    double maxAllowedDist = spawnRadius * SPAWN_RADIUS_TELEPORT_MULTIPLIER;
-                    if (distSquared > maxAllowedDist * maxAllowedDist) {
-                        teleportWalkerToBorder(provider, i);
+                    // Kill circle: walker вышел далеко — он умирает, не телепортируется.
+                    double killR = spawnRadius * KILL_RADIUS_MULT;
+                    if (distSquared > killR * killR) {
+                        walkerAlive[i] = false;
                         continue;
                     }
 
                     if (touchesCluster(walkerX[i], walkerY[i])) {
-                        stickWalker(g2d, newPoints, i, distSquared);
-                        sticksThisTick++;
-
-                        if (sticksThisTick >= MAX_STICKS_PER_TICK) {
+                        // Вероятностное прилипание: коралл вместо нити.
+                        OptionalInt rollOpt = provider.getNextRandomNumber();
+                        if (rollOpt.isEmpty()) {
+                            bufferEmpty = true;
                             break;
                         }
+                        randomNumbersUsed++;
+
+                        double roll = (rollOpt.getAsInt() & 0x7FFFFFFF)
+                                / (double) Integer.MAX_VALUE;
+
+                        if (roll < STICKING_PROBABILITY) {
+                            stickWalker(g2d, newPoints, i, distSquared);
+                            sticksThisTick++;
+                            if (sticksThisTick >= MAX_STICKS_PER_TICK) {
+                                break;
+                            }
+                        }
+                        // Иначе walker продолжает блуждать — может скользнуть глубже в кластер.
                     }
                 }
 
@@ -274,7 +329,10 @@ public class DLAMode implements VisualizationMode {
         return newPoints;
     }
 
-    private void stickWalker(Graphics2D g2d, List<Point> newPoints, int index, double distSquared) {
+    // ==== прилипание и отрисовка =============================================
+
+    private void stickWalker(Graphics2D g2d, List<Point> newPoints,
+                             int index, double distSquared) {
         int x = walkerX[index];
         int y = walkerY[index];
 
@@ -288,59 +346,74 @@ public class DLAMode implements VisualizationMode {
             maxDist = dist;
         }
 
-        if (dist + SPAWN_RADIUS_EXPANSION_TRIGGER_PADDING > spawnRadius) {
-            spawnRadius = Math.min(
-                    (int) dist + SPAWN_RADIUS_EXPANSION_PADDING,
-                    Math.min(width, height) / CENTER_DIVISOR - SPAWN_RADIUS_MAX_MARGIN
-            );
-        }
+        // Spawn-радиус всегда чуть больше фронта кластера — но не больше канваса.
+        spawnRadius = Math.min((int) maxDist + BIRTH_BUFFER, maxRadiusCap);
 
-        double t = maxDist == 0 ? MIN_DEPTH : dist / maxDist;
-        drawStuckParticle(g2d, x, y, t);
+        // Логистическая шкала по времени: ассимптотически стремится к 1.0,
+        // но никогда не застревает в одном сегменте палитры.
+        double tTime = pointCount / (COLOR_TIME_SCALE + pointCount);
+
+        // Радиальная составляющая: фронт ярче центра прямо сейчас.
+        double tRadial = maxDist > 0 ? dist / maxDist : 0.0;
+
+        // Смешиваем — даёт и пространственную, и временную динамику.
+        double t = (1.0 - COLOR_RADIAL_WEIGHT) * tTime
+                + COLOR_RADIAL_WEIGHT * tRadial;
+        t = Math.clamp(t, 0.0, 1.0);
+
+        drawParticle(g2d, x, y, t);
         newPoints.add(new Point(x, y));
     }
 
-    private void drawStuckParticle(Graphics2D g2d, int x, int y, double depth) {
-        int size = getSizeForDepth(depth);
-        Color color = getColorForDepth(depth);
+    private void drawParticle(Graphics2D g2d, int x, int y, double t) {
+        int size = getSizeForDepth(t);
+        Color color = getColorForDepth(t);
 
-        int haloSize = Math.max(size + HALO_EXTRA_SIZE, (int) Math.round(size * HALO_SCALE));
-        Color haloColor = new Color(color.getRed(), color.getGreen(), color.getBlue(), HALO_ALPHA);
+        // Многослойный glow: внешний (тусклый и широкий) → внутренний (яркий).
+        for (int i = 0; i < HALO_SCALES.length; i++) {
+            int hs = Math.max(size + 2, (int) Math.round(size * HALO_SCALES[i]));
+            g2d.setColor(new Color(
+                    color.getRed(), color.getGreen(), color.getBlue(),
+                    HALO_ALPHAS[i]
+            ));
+            g2d.fillOval(x - hs / CENTER_DIVISOR, y - hs / CENTER_DIVISOR, hs, hs);
+        }
 
-        g2d.setColor(haloColor);
-        g2d.fillOval(
-                x - haloSize / CENTER_DIVISOR,
-                y - haloSize / CENTER_DIVISOR,
-                haloSize,
-                haloSize
+        // Высветленное ядро.
+        Color core = new Color(
+                Math.min(255, color.getRed()   + CORE_BRIGHTEN),
+                Math.min(255, color.getGreen() + CORE_BRIGHTEN),
+                Math.min(255, color.getBlue()  + CORE_BRIGHTEN)
         );
-
-        g2d.setColor(color);
-        g2d.fillOval(
-                x - size / CENTER_DIVISOR,
-                y - size / CENTER_DIVISOR,
-                size,
-                size
-        );
+        g2d.setColor(core);
+        g2d.fillOval(x - size / CENTER_DIVISOR, y - size / CENTER_DIVISOR, size, size);
     }
 
+    /** Линейная интерполяция по PALETTE. */
     private Color getColorForDepth(double t) {
-        t = Math.clamp(t, MIN_DEPTH, MAX_DEPTH);
-
-        float hue = (float) (t * HUE_MAX);
-        float saturation = (float) (SATURATION_BASE + SATURATION_EXTRA * (MAX_DEPTH - t));
-        float brightness = (float) (BRIGHTNESS_BASE - BRIGHTNESS_DROP * t);
-
-        return Color.getHSBColor(hue, saturation, brightness);
+        t = Math.clamp(t, 0.0, 1.0);
+        double scaled = t * (PALETTE.length - 1);
+        int idx = (int) scaled;
+        if (idx >= PALETTE.length - 1) {
+            return PALETTE[PALETTE.length - 1];
+        }
+        double f = scaled - idx;
+        Color a = PALETTE[idx];
+        Color b = PALETTE[idx + 1];
+        return new Color(
+                (int) (a.getRed()   + (b.getRed()   - a.getRed())   * f),
+                (int) (a.getGreen() + (b.getGreen() - a.getGreen()) * f),
+                (int) (a.getBlue()  + (b.getBlue()  - a.getBlue())  * f)
+        );
     }
 
     private int getSizeForDepth(double t) {
-        t = Math.clamp(t, MIN_DEPTH, MAX_DEPTH);
-
-        double scale = SIZE_SCALE_CENTER - SIZE_SCALE_DROP * t;
-
+        t = Math.clamp(t, 0.0, 1.0);
+        double scale = SIZE_SCALE_BASE + SIZE_SCALE_GROWTH * t;
         return Math.max(MIN_DOT_SIZE, (int) (baseDotSize * scale));
     }
+
+    // ==== walker управление ==================================================
 
     private boolean spawnWalker(RNProvider provider, int index) {
         OptionalInt angleOpt = provider.getNextRandomNumber();
@@ -360,32 +433,17 @@ public class DLAMode implements VisualizationMode {
         return true;
     }
 
-    private void teleportWalkerToBorder(RNProvider provider, int index) {
-        OptionalInt angleOpt = provider.getNextRandomNumber();
-        if (angleOpt.isEmpty()) {
-            walkerAlive[index] = false;
-            return;
-        }
-
-        int angle = Math.floorMod(angleOpt.getAsInt(), FULL_CIRCLE_DEGREES);
-        randomNumbersUsed++;
-
-        placeWalkerOnSpawnBorder(index, angle);
-
-        walkerAge[index] = 0;
-        walkerAlive[index] = true;
-    }
-
     private void placeWalkerOnSpawnBorder(int index, int angle) {
         walkerX[index] = centerX + (int) (spawnRadius * ANGLE_COS[angle]);
         walkerY[index] = centerY + (int) (spawnRadius * ANGLE_SIN[angle]);
 
+        // Clamp всё ещё нужен как защита, но при правильном maxRadiusCap
+        // он почти никогда не срабатывает (и не создаёт линейных артефактов).
         walkerX[index] = Math.clamp(
                 walkerX[index],
                 MIN_WALKER_COORDINATE,
                 width - INNER_BORDER_MAX_OFFSET
         );
-
         walkerY[index] = Math.clamp(
                 walkerY[index],
                 MIN_WALKER_COORDINATE,
@@ -425,15 +483,5 @@ public class DLAMode implements VisualizationMode {
 
     private int toIndex(int x, int y) {
         return y * width + x;
-    }
-
-    @Override
-    public int getPointCount() {
-        return pointCount;
-    }
-
-    @Override
-    public int getRandomNumbersUsed() {
-        return randomNumbersUsed;
     }
 }

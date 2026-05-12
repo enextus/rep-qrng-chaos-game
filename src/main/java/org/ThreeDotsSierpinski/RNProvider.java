@@ -9,7 +9,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.ArrayList; // <-- ДОБАВЛЕНО
+import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalInt;
 import java.util.concurrent.BlockingQueue;
@@ -104,17 +104,21 @@ public class RNProvider {
     /**
      * Сам массив-буфер
      */
+    private final Object consumedNumbersLock = new Object();
+
     private final long[] consumedNumbersRing = new long[HISTORY_MAX_SIZE];
 
     /**
-     * Указатель, куда писать следующее число
+     * Указатель, куда писать следующее число.
+     * Доступ только под consumedNumbersLock.
      */
-    private volatile int ringWriteIndex = 0;
+    private int ringWriteIndex = 0;
 
     /**
-     * Счетчик реально сгенерированных чисел (чтобы не возвращать пустые нули из массива)
+     * Количество реально заполненных значений в history-buffer.
+     * Доступ только под consumedNumbersLock.
      */
-    private volatile int totalConsumed = 0;
+    private int totalConsumed = 0;
     private volatile boolean isLoading = false;
     private volatile boolean isReconnecting = false;
     private volatile boolean initialLoadComplete = false;
@@ -166,7 +170,7 @@ public class RNProvider {
     }
 
     // ========================================================================
-    // Sleeper и ProviderSettings (без изменений)
+    // Sleeper и ProviderSettings
     // ========================================================================
 
     @FunctionalInterface
@@ -305,28 +309,34 @@ public class RNProvider {
      * Возвращает последние N потребленных чисел (для UI без лагов).
      */
     public List<Long> getLastConsumedNumbers(int limit) {
-        int actualSize = Math.min(limit, Math.min(totalConsumed, HISTORY_MAX_SIZE));
-        if (actualSize <= 0) return List.of();
+        long[] result;
 
-        long[] result = new long[actualSize];
+        synchronized (consumedNumbersLock) {
+            int actualSize = Math.min(limit, Math.min(totalConsumed, HISTORY_MAX_SIZE));
+            if (actualSize <= 0) {
+                return List.of();
+            }
 
-        // Читаем буфер в обратном порядке (от самых новых к старым)
-        int currentIdx = ringWriteIndex == 0 ? HISTORY_MAX_SIZE - 1 : ringWriteIndex - 1;
+            result = new long[actualSize];
 
-        for (int i = 0; i < actualSize; i++) {
-            result[i] = consumedNumbersRing[currentIdx];
-            currentIdx = currentIdx == 0 ? HISTORY_MAX_SIZE - 1 : currentIdx - 1;
+            // Читаем буфер в обратном порядке: от самых новых к старым.
+            int currentIdx = ringWriteIndex == 0 ? HISTORY_MAX_SIZE - 1 : ringWriteIndex - 1;
+
+            for (int i = 0; i < actualSize; i++) {
+                result[i] = consumedNumbersRing[currentIdx];
+                currentIdx = currentIdx == 0 ? HISTORY_MAX_SIZE - 1 : currentIdx - 1;
+            }
         }
 
-        // Разворачиваем массив, чтобы индекс 0 был самым старым из выборки
-        for (int i = 0; i < actualSize / 2; i++) {
+        // Разворачиваем массив, чтобы индекс 0 был самым старым из выборки.
+        for (int i = 0; i < result.length / 2; i++) {
             long temp = result[i];
-            result[i] = result[actualSize - 1 - i];
-            result[actualSize - 1 - i] = temp;
+            result[i] = result[result.length - 1 - i];
+            result[result.length - 1 - i] = temp;
         }
 
-        // Конвертируем в List<Long> для совместимости с остальным кодом
-        List<Long> list = new ArrayList<>(actualSize);
+        // Конвертируем в List<Long> для совместимости с остальным кодом.
+        List<Long> list = new ArrayList<>(result.length);
         for (long num : result) {
             list.add(num);
         }
@@ -424,7 +434,7 @@ public class RNProvider {
     }
 
     public void shutdown() {
-        isReconnecting = false; // <--- ДОБАВИТЬ
+        isReconnecting = false;
         LOGGER.info("RNProvider shutting down. Mode: " + currentMode
                 + ", API requests: " + apiRequestCount
                 + ", pseudo batches: " + pseudoBatchCount);
@@ -452,12 +462,18 @@ public class RNProvider {
 
     /**
      * Добавляет число в кольцевой буфер.
-     * Потокобезопасно за счет атомарности записи в массив примитивов.
+     * Потокобезопасно: запись значения, сдвиг индекса и обновление размера
+     * выполняются под одним lock.
      */
     private void addConsumedNumber(long value) {
-        consumedNumbersRing[ringWriteIndex] = value;
-        ringWriteIndex = (ringWriteIndex + 1) % HISTORY_MAX_SIZE;
-        totalConsumed++;
+        synchronized (consumedNumbersLock) {
+            consumedNumbersRing[ringWriteIndex] = value;
+            ringWriteIndex = (ringWriteIndex + 1) % HISTORY_MAX_SIZE;
+
+            if (totalConsumed < HISTORY_MAX_SIZE) {
+                totalConsumed++;
+            }
+        }
     }
 
     // ========================================================================

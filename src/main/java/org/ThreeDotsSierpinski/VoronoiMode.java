@@ -2,6 +2,7 @@ package org.ThreeDotsSierpinski;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import javax.swing.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalInt;
@@ -20,12 +21,22 @@ public class VoronoiMode implements VisualizationMode {
     private static final int LLOYD_INTERVAL = 20;     // каждые 20 шагов — релаксация
     private static final float BORDER_DARKNESS = 0.25f;
 
+    private static final String MARKERS_LABEL_TEXT = "Метки";
+    private static final String MARKERS_ON_TEXT = "ВКЛ.";
+    private static final String MARKERS_OFF_TEXT = "ВЫКЛ.";
+    private static final String MARKERS_TOOLTIP_TEXT = "Показать/скрыть белые метки seed-центров";
+
+    private static final int MARKER_HALF_SIZE = 2;
+    private static final int MARKER_TOGGLE_WIDTH = 70;
+    private static final int MARKER_TOGGLE_HEIGHT = 28;
+
     private int width;
     private int height;
     private List<Seed> seeds;
     private int pointCount = 0;
     private int randomNumbersUsed = 0;
     private int stepCount = 0;
+    private boolean showCenterMarkers = true;
 
     private record Seed(int x, int y, Color color, int age) {}
 
@@ -49,6 +60,36 @@ public class VoronoiMode implements VisualizationMode {
 
     @Override
     public boolean usesDarkBackground() { return true; }
+
+    @Override
+    public List<JComponent> createModeControls(DotController controller) {
+        var label = new JLabel(MARKERS_LABEL_TEXT);
+        var toggle = new JToggleButton();
+
+        toggle.putClientProperty("JToggleButton.buttonType", "toggle");
+        toggle.setSelected(showCenterMarkers);
+        toggle.setPreferredSize(new Dimension(MARKER_TOGGLE_WIDTH, MARKER_TOGGLE_HEIGHT));
+        toggle.setToolTipText(MARKERS_TOOLTIP_TEXT);
+
+        Runnable syncToggleText = () ->
+                toggle.setText(showCenterMarkers ? MARKERS_ON_TEXT : MARKERS_OFF_TEXT);
+        syncToggleText.run();
+
+        toggle.addActionListener(_ -> {
+            showCenterMarkers = toggle.isSelected();
+            syncToggleText.run();
+            controller.refreshVisualization();
+        });
+
+        return List.of(label, toggle);
+    }
+
+    @Override
+    public void redraw(BufferedImage canvas, int width, int height, int dotSize) {
+        this.width = width;
+        this.height = height;
+        renderVoronoi(canvas);
+    }
 
     @Override
     public void initialize(BufferedImage canvas, int width, int height) {
@@ -165,13 +206,23 @@ public class VoronoiMode implements VisualizationMode {
 
         canvas.setRGB(0, 0, width, height, pixels, 0, width);
 
-        // Рисуем сами seed точки белым перекрестием
+        if (showCenterMarkers) {
+            drawCenterMarkers(canvas);
+        }
+    }
+
+    /**
+     * Рисует seed-точки белым перекрестием.
+     */
+    private void drawCenterMarkers(BufferedImage canvas) {
         Graphics2D g = canvas.createGraphics();
         g.setColor(Color.WHITE);
+
         for (Seed s : seeds) {
-            g.drawLine(s.x - 2, s.y, s.x + 2, s.y);
-            g.drawLine(s.x, s.y - 2, s.x, s.y + 2);
+            g.drawLine(s.x - MARKER_HALF_SIZE, s.y, s.x + MARKER_HALF_SIZE, s.y);
+            g.drawLine(s.x, s.y - MARKER_HALF_SIZE, s.x, s.y + MARKER_HALF_SIZE);
         }
+
         g.dispose();
     }
 
